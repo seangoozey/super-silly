@@ -1,0 +1,14 @@
+# super-silly seed config — SillyTavern's `npm run init` (server-init.js)
+# fills in any keys not listed here.
+listen: true
+port: 8000
+whitelistMode: false
+basicAuthMode: false
+enableServerPlugins: true
+enableServerPluginsAutoUpdate: false
+browserLaunch:
+    enabled: false
+dataRoot: ./data
+ollama:
+    keepAlive: -1
+    batchSize: -1

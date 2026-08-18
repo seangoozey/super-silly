@@ -1,0 +1,7 @@
+.git
+node_modules
+dev
+dist
+*.log
+.env
+.zcode

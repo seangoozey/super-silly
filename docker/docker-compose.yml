@@ -1,0 +1,44 @@
+# super-silly — SillyTavern + Ollama + Autolife in one container.
+#
+#   docker compose -f docker/docker-compose.yml up -d --build
+#
+# Optional .env file next to this compose file:
+#   TELEGRAM_BOT_TOKEN=123456:ABC…        (from @BotFather)
+#   TELEGRAM_ALLOWED_CHAT_IDS=12345678    (your numeric telegram chat id)
+#   OLLAMA_MODEL=hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M
+#   OLLAMA_FALLBACK_MODEL=hf.co/ReadyArt/Dark-Desires-12B-v1.0-GGUF:Q4_K_M
+#
+# GPU (NVIDIA hosts with nvidia-container-toolkit): uncomment `gpus: all`.
+# Tesla P40 note: driver branch 550+ required (last branch supporting Pascal).
+
+services:
+  supersilly:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: supersilly:latest
+    container_name: supersilly
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M}
+      OLLAMA_FALLBACK_MODEL: ${OLLAMA_FALLBACK_MODEL:-hf.co/ReadyArt/Dark-Desires-12B-v1.0-GGUF:Q4_K_M}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+    volumes:
+      - ollama:/root/.ollama
+      - st-config:/home/node/app/config
+      - st-data:/home/node/app/data
+    # gpus: all
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/api/plugins/autolife/status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  ollama:
+  st-config:
+  st-data:

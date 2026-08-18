@@ -1,0 +1,12 @@
+# Dev override for machines with <=16GB VRAM (e.g. RTX 5060):
+# run the 12B as primary and the 27B as fallback.
+#
+#   docker compose -f docker/docker-compose.yml -f docker/compose.dev.yml up -d --build
+#
+services:
+  supersilly:
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/ReadyArt/Dark-Desires-12B-v1.0-GGUF:Q4_K_M}
+      OLLAMA_FALLBACK_MODEL: ${OLLAMA_FALLBACK_MODEL:-hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M}
+    ports:
+      - "8001:8000"

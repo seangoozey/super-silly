@@ -1,0 +1,4 @@
+# Shell scripts must stay LF or they break inside Linux containers
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf
