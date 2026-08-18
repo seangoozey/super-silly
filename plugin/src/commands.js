@@ -37,13 +37,25 @@ export function createCommandRegistry(ctx) {
 
     const characterSummary = (entry) => {
         const status = engine.status().characters.find((c) => c.name === entry.name);
+        if (!status) return `${entry.name}: no engine state yet.`;
+        const mins = (iso) => Math.max(0, Math.round((new Date(iso).getTime() - Date.now()) / 60000));
+        const pending = status.pendingReply
+            ? `Replying in ~${mins(status.pendingReply.dueAt)} min${status.pendingReply.attempts ? ` (retry ${status.pendingReply.attempts}/5)` : ''}`
+            : 'No pending reply';
+        const init = status.initiative ?? {};
+        const initLine = !init.enabled
+            ? 'Initiative: off'
+            : init.blockedReason
+                ? `Initiative: on hold — ${init.blockedReason}`
+                : `Initiative: eligible${init.nextEligibleAt ? ` in ~${mins(init.nextEligibleAt)} min` : ''} (${init.todayCount ?? 0}/${init.max_per_day} used today)`;
         const lines = [
             `*${entry.name}*`,
-            `Right now: ${status?.activity ?? 'unknown'} (${Math.round((status?.availability ?? 0) * 100)}% available${status?.mood ? `, feeling ${status.mood}` : ''})`,
-            status ? `Their local time: ${status.localTime}` : '',
-            `Relationship: ${Math.round(status?.relationship ?? 0)}/100 (${relationshipDescriptor(status?.relationship ?? 0)})`,
-            status?.pendingReply ? `Replying to you in: ~${Math.max(0, Math.round((new Date(status.pendingReply.dueAt).getTime() - Date.now()) / 60000))} min` : 'No pending reply',
-            status?.paused ? '⚠️ paused' : '',
+            `Right now: ${status.activity} (${Math.round(status.availability * 100)}% available${status.mood ? `, feeling ${status.mood}` : ''})`,
+            `Their local time: ${status.localTime}`,
+            `Relationship: ${Math.round(status.relationship)}/100 (${relationshipDescriptor(status.relationship)})`,
+            pending,
+            initLine,
+            status.paused ? '⚠️ paused' : '',
         ].filter(Boolean);
         return lines.join('\n');
     };
@@ -58,6 +70,7 @@ export function createCommandRegistry(ctx) {
                 '/chars — list characters\n' +
                 '/switch <name> — talk to a character\n' +
                 '/status — what your character is up to\n' +
+                '/audit [on|off] — see every engine decision as it happens\n' +
                 '/model — model control (list/use/pull)\n' +
                 '/pause, /resume — pause the character\'s life\n' +
                 '/upload — attach a character card (.png/.json) to import it\n\n' +
@@ -236,6 +249,32 @@ export function createCommandRegistry(ctx) {
             }
 
             await transport.send(chatId, 'Usage: /model [list | use <name> | pull <name>]');
+        },
+    });
+
+    register({
+        name: 'audit',
+        help: 'engine decision notifications: /audit [on|off]',
+        run: async (chatId, args) => {
+            const bindings = store.loadBindings();
+            const key = String(chatId);
+            const binding = bindings[key];
+            if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
+            const sub = (args[0] ?? '').toLowerCase();
+            if (sub === 'on' || sub === 'off') {
+                binding.audit = sub === 'on';
+                bindings[key] = binding;
+                store.saveBindings(bindings);
+                return transport.send(chatId,
+                    `Audit notifications ${binding.audit ? 'ON' : 'OFF'} for ${binding.character}. `
+                    + (binding.audit
+                        ? "You'll get a message here for every engine decision: instant replies, delays (with the wait), ignored messages, catch-ups, initiative rolls and blocks, retries after failed generations."
+                        : 'Back to silence.'));
+            }
+            return transport.send(chatId,
+                `Audit notifications are currently ${binding.audit ? 'ON' : 'OFF'} for ${binding.character}.\n`
+                + '/audit on — every planned action/non-action gets messaged here\n'
+                + '/audit off — silence');
         },
     });
 

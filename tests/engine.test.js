@@ -209,3 +209,54 @@ test('status() summarizes life state', async () => {
     assert.ok(c.availability > 0); // free time
     assert.ok(c.localTime.includes('UTC'));
 });
+
+test('failed delayed reply retries with backoff and audits each step', async () => {
+    const card = characterCard('Flint');
+    const start = new Date(Date.UTC(2026, 0, 15, 10, 0));
+    const h = buildHarness({ card, now: start, rngValues: [0.99, 0.99] }); // -> delayed
+
+    await h.engine.onInbound({ character: 'Flint', mes: 'you up?', source: 'telegram' });
+    let state = stateOf(h.store, 'Flint');
+    assert.ok(state.pendingReply);
+    assert.equal(state.pendingReply.attempts, 0);
+
+    // make generation fail
+    h.engine.ollama.chat = async () => { throw new Error('model exploded'); };
+    h.clock.now = new Date(start.getTime() + 5 * 3600_000); // past due
+    await h.engine.tick(h.clock.now);
+
+    state = stateOf(h.store, 'Flint');
+    assert.ok(state.pendingReply, 'reply re-pended after failure');
+    assert.equal(state.pendingReply.attempts, 1);
+    const audit = h.store.readAudit('Flint', 50).map((a) => a.kind);
+    assert.ok(audit.includes('deferred'));
+    assert.ok(audit.includes('pending_fired'));
+    assert.ok(audit.includes('gen_failed'));
+    assert.ok(audit.includes('gen_retry'));
+    assert.equal(h.delivered.length, 0);
+
+    // recovery: generation works again, second attempt fires and delivers
+    h.engine.ollama.chat = async () => 'back online, sorry!';
+    h.clock.now = new Date(state.pendingReply.dueAt.getTime ? state.pendingReply.dueAt : new Date(state.pendingReply.dueAt));
+    h.clock.now = new Date(new Date(state.pendingReply.dueAt).getTime() + 1000);
+    await h.engine.tick(h.clock.now);
+    state = stateOf(h.store, 'Flint');
+    assert.equal(state.pendingReply, null);
+    assert.equal(h.delivered.length, 1);
+    assert.ok(h.store.readAudit('Flint', 50).some((a) => a.kind === 'sent'));
+});
+
+test('initiative blocks are visible in status', async () => {
+    const card = characterCard('Nora', { initiative: { enabled: true, min_gap_minutes: 60, max_per_day: 1, followup_on_unread_hours: 0 } });
+    const h = buildHarness({ card });
+    let s = h.engine.status();
+    let n = s.characters[0];
+    assert.equal(n.initiative.blockedReason, null); // eligible
+
+    // send a message that gets a quick reply -> then "just messaged" blocks initiative
+    h.engine.rng = makeRng([0.99, 0.0]);
+    await h.engine.onInbound({ character: 'Nora', mes: 'hi', source: 'telegram' });
+    s = h.engine.status();
+    n = s.characters[0];
+    assert.match(n.initiative.blockedReason, /less than 20 min/);
+});

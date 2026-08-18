@@ -138,4 +138,60 @@ export class StateStore {
     saveTelegramOffset(offset) {
         this._writeJson('telegram-offset.json', { offset });
     }
+
+    // ---- audit log (ring-buffer-ish JSONL per character + engine-wide) ----
+
+    #auditFile(character) {
+        return path.join(this.root, 'audit', `${safeName(character || '_engine')}.jsonl`);
+    }
+
+    /**
+     * Append an audit entry. Files are trimmed to the last 300 entries once
+     * they pass 400 so the disk footprint stays tiny.
+     * @param {string|null} character null = engine-wide event
+     * @param {{ ts: string, character: string|null, kind: string, text: string }} entry
+     */
+    appendAudit(character, entry) {
+        const file = this.#auditFile(character);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        let lines = [];
+        try {
+            lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+        } catch { /* new file */ }
+        lines.push(JSON.stringify({ character: character ?? null, ...entry }));
+        if (lines.length > 400) lines = lines.slice(-300);
+        fs.writeFileSync(file, lines.join('\n') + '\n', 'utf8');
+    }
+
+    /**
+     * Read audit entries, newest last.
+     * @param {string|null} character null/undefined = merge every audit file
+     * @param {number} limit
+     * @returns {Array<object>}
+     */
+    readAudit(character, limit = 100) {
+        const files = character
+            ? [this.#auditFile(character)]
+            : (() => {
+                const dir = path.join(this.root, 'audit');
+                try {
+                    return fs.readdirSync(dir).map((f) => path.join(dir, f));
+                } catch {
+                    return [];
+                }
+            })();
+        const entries = [];
+        for (const file of files) {
+            try {
+                for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+                    if (!line.trim()) continue;
+                    try {
+                        entries.push(JSON.parse(line));
+                    } catch { /* skip corrupt line */ }
+                }
+            } catch { /* missing file */ }
+        }
+        entries.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+        return entries.slice(-limit);
+    }
 }

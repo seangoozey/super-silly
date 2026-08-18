@@ -121,6 +121,15 @@ function panelHtml() {
                 </div>
 
                 <div class="autolife-section">
+                    <h4>Audit log
+                        <select id="autolife_audit_filter" style="font-size:0.85em; margin-left:8px;"></select>
+                        <a class="autolife-btn" id="autolife_audit_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a>
+                    </h4>
+                    <div class="autolife-muted">Every engine decision — replies (instant/delayed/ignored), initiative rolls and blocks, retries, journal notes. Also live in Telegram via /audit on.</div>
+                    <div id="autolife_audit_feed" class="autolife-audit-feed"></div>
+                </div>
+
+                <div class="autolife-section">
                     <h4>Telegram</h4>
                     <div class="autolife-form-grid">
                         <label>Bot token</label>
@@ -209,6 +218,7 @@ async function refreshStatus() {
         );
         state.enabled = new Set(s.engine.characters.filter((c) => c.enabled && !c.paused).map((c) => c.name));
         renderMonitor(s.engine.characters);
+        populateAuditFilter(s.engine.characters);
     } catch (err) {
         $('#autolife_badge').text('plugin unreachable');
         $('#autolife_status').text(`Could not reach the Autolife plugin — is it enabled in config.yaml? (${err.message})`);
@@ -221,9 +231,18 @@ function renderMonitor(characters) {
         $t.html('<tr><td class="autolife-muted">No Autolife characters yet — open a character and configure it above.</td></tr>');
         return;
     }
+    const mins = (iso) => Math.max(0, Math.round((new Date(iso).getTime() - Date.now()) / 60000));
     const rows = characters.map((c) => {
         const avail = Math.round(c.availability * 100);
-        const pending = c.pendingReply ? `reply in ${Math.max(0, Math.round((new Date(c.pendingReply.dueAt) - Date.now()) / 60000))}m` : '—';
+        const pending = c.pendingReply
+            ? `reply in ${mins(c.pendingReply.dueAt)} min${c.pendingReply.attempts ? ` (retry ${c.pendingReply.attempts}/5)` : ''}`
+            : '—';
+        const init = c.initiative ?? {};
+        const nextTxt = !init.enabled
+            ? 'off'
+            : init.blockedReason
+                ? init.blockedReason.replace(/^(asleep\/unreachable|a reply to you is pending|generating right now).*$/, (m) => m.split(' (')[0].split(' — ')[0])
+                : (init.nextEligibleAt ? `in ${mins(init.nextEligibleAt)} min` : 'eligible now');
         const buttons = `
             <a class="autolife-btn" data-force="${c.name}" title="force a message now"><i class="fa-solid fa-bolt"></i></a>
             <a class="autolife-btn" data-pause="${c.name}" data-paused="${c.paused ? 1 : 0}" title="${c.paused ? 'resume' : 'pause'}"><i class="fa-solid fa-${c.paused ? 'play' : 'pause'}"></i></a>`;
@@ -233,11 +252,44 @@ function renderMonitor(characters) {
             <td>${c.localTime}</td>
             <td>rel ${Math.round(c.relationship)}</td>
             <td>${pending}</td>
+            <td title="${init.blockedReason ?? 'initiative eligible'}">${nextTxt}</td>
             <td>${c.onTelegram ? 'tg ✓' : ''}</td>
             <td>${buttons}</td>
         </tr>`;
     });
-    $t.html('<tr><th>character</th><th>doing</th><th>their time</th><th>rel</th><th>pending</th><th></th><th></th></tr>' + rows.join(''));
+    $t.html('<tr><th>character</th><th>doing</th><th>their time</th><th>rel</th><th>pending</th><th>next text</th><th></th><th></th></tr>' + rows.join(''));
+}
+
+// ---------------------------------------------------------------- audit log
+
+function auditRow(entry) {
+    const time = entry.ts ? new Date(entry.ts).toLocaleTimeString([], { hour12: false }) : '';
+    const who = entry.character ?? 'engine';
+    return `<div class="autolife-audit-row" data-character="${who}">
+        <span class="autolife-muted">${time}</span> <b>${who}</b> — ${entry.text ?? entry.kind}
+    </div>`;
+}
+
+async function loadAudit() {
+    try {
+        const { entries } = await api('/audit?limit=80');
+        $('#autolife_audit_feed').html(entries.map(auditRow).reverse().join('') || '<div class="autolife-muted">Nothing yet — engine decisions will appear here.</div>');
+        applyAuditFilter();
+    } catch { /* plugin offline */ }
+}
+
+function applyAuditFilter() {
+    const filter = $('#autolife_audit_filter').val() || 'all';
+    $('#autolife_audit_feed .autolife-audit-row').each((_, el) => {
+        const show = filter === 'all' || el.dataset.character === filter;
+        $(el).toggle(show);
+    });
+}
+
+function populateAuditFilter(characters) {
+    const current = $('#autolife_audit_filter').val() || 'all';
+    const options = ['all', ...characters.map((c) => c.name)];
+    $('#autolife_audit_filter').html(options.map((o) => `<option value="${o}" ${o === current ? 'selected' : ''}>${o === 'all' ? 'all' : o}</option>`).join(''));
 }
 
 async function loadCharacterEditor() {
@@ -436,6 +488,14 @@ function connectEvents() {
             return;
         }
         switch (data.type) {
+            case 'audit': {
+                const $feed = $('#autolife_audit_feed');
+                if ($feed.find('.autolife-muted-only').length || $feed.children().length === 0) $feed.empty();
+                $feed.prepend(auditRow(data));
+                $feed.children().slice(120).remove();
+                applyAuditFilter();
+                break;
+            }
             case 'character_message': {
                 $('.autolife-typing').remove();
                 refreshStatus();
@@ -526,6 +586,9 @@ function wireEvents() {
             .then(loadTelegramSection).catch((e) => toast(e.message));
     });
 
+    $('#autolife_audit_filter').on('change', applyAuditFilter);
+    $('#autolife_audit_refresh').on('click', loadAudit);
+
     $('#autolife_tg_save').on('click', async () => {
         const token = $('#autolife_tg_token').val().trim();
         const ids = $('#autolife_tg_ids').val().split(/[,\s]+/).map((s) => Number(s.trim())).filter(Number.isFinite);
@@ -588,7 +651,9 @@ jQuery(() => {
             refreshStatus();
             loadTelegramSection();
             loadModelSection();
+            loadAudit();
             setInterval(refreshStatus, 30_000);
+            setInterval(loadAudit, 120_000);
         });
         ST.eventSource.on(ST.event_types.CHAT_CHANGED, () => {
             loadCharacterEditor();

@@ -180,6 +180,21 @@ export class TelegramTransport {
         await Promise.all(targets.map((chatId) => this.send(chatId, text)));
     }
 
+    /**
+     * Engine hook: forward audit entries to chats that subscribed via /audit on.
+     * Character-scoped entries go only to that character's chat; engine-wide
+     * entries (character null) go to every subscribed chat.
+     */
+    onAudit(entry) {
+        if (!this.enabled || !entry?.text) return;
+        const bindings = this.store.loadBindings();
+        for (const [chatId, b] of Object.entries(bindings)) {
+            if (!b?.audit) continue;
+            if (entry.character && b.character !== entry.character) continue;
+            this.send(Number(chatId), `🔎 ${entry.text}`).catch(() => {});
+        }
+    }
+
     /** Bind a telegram chat to a character (latest chat or a fresh one). */
     async bind(chatId, entry) {
         const bindings = this.store.loadBindings();

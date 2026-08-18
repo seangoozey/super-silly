@@ -45,6 +45,20 @@ const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
 export function registerRoutes(router, deps) {
     const { engine, store, cards, chatStore, ollama, transport, charactersDir, broadcast, addSseClient, restartTransport, log } = deps;
 
+    /** Persist + broadcast an audit entry from a route action. */
+    const audit = (character, kind, text) => {
+        const entry = { ts: new Date().toISOString(), character: character ?? null, kind, text };
+        store.appendAudit(character, entry);
+        broadcast('audit', entry);
+    };
+
+    // ---- audit log ----
+    router.get('/audit', wrap(async (req, res) => {
+        const name = req.query?.name ? String(req.query.name) : null;
+        const limit = Math.min(500, Math.max(1, Number(req.query?.limit) || 100));
+        res.json({ entries: store.readAudit(name, limit) });
+    }));
+
     // ---- SSE live events ----
     router.get('/events', (req, res) => {
         res.writeHead(200, {
@@ -113,6 +127,7 @@ export function registerRoutes(router, deps) {
         cards.scan();
         log(`updated autolife block for "${entry.name}"`);
         broadcast('card_updated', { character: entry.name });
+        audit(entry.name, 'card_updated', 'autolife configuration updated from the SillyTavern panel');
         res.json({ ok: true, name: entry.name, warnings: check.warnings });
     }));
 
@@ -128,6 +143,7 @@ export function registerRoutes(router, deps) {
         state.enabled = !!body.enabled;
         store.saveState(state);
         broadcast('state_changed', { character: entry.name });
+        audit(entry.name, 'state_changed', `autolife ${body.enabled ? 'enabled' : 'disabled'} for this character`);
         res.json({ ok: true });
     }));
 
@@ -139,6 +155,7 @@ export function registerRoutes(router, deps) {
         state.paused = !!body.paused;
         store.saveState(state);
         broadcast('state_changed', { character: entry.name });
+        audit(entry.name, 'state_changed', body.paused ? 'paused — no replies, no initiative' : 'resumed');
         res.json({ ok: true });
     }));
 
@@ -240,6 +257,7 @@ export function registerRoutes(router, deps) {
         store.saveSettings(settings);
         engine.refreshSettings();
         broadcast('model_changed', { model: settings.model.current });
+        audit(null, 'model', `current model switched to ${settings.model.current}`);
         res.json({ ok: true, current: settings.model.current });
     }));
 
@@ -248,9 +266,16 @@ export function registerRoutes(router, deps) {
         if (!body.model) return res.status(400).json({ error: 'model required' });
         const model = String(body.model);
         res.json({ started: true });
+        audit(null, 'model', `model pull started: ${model}`);
         ollama.ensureModel(model, (p) => broadcast('model_pull', { model, ...p }))
-            .then((ok) => broadcast('model_pull', { model, status: ok ? 'success' : 'failed' }))
-            .catch((err) => broadcast('model_pull', { model, status: `failed: ${err.message}` }));
+            .then((ok) => {
+                broadcast('model_pull', { model, status: ok ? 'success' : 'failed' });
+                audit(null, 'model', `model pull ${ok ? 'succeeded' : 'FAILED'}: ${model}`);
+            })
+            .catch((err) => {
+                broadcast('model_pull', { model, status: `failed: ${err.message}` });
+                audit(null, 'model', `model pull FAILED: ${model} (${err.message})`);
+            });
     }));
 
     // ---- schedule preview (used by the panel's grid editor) ----
