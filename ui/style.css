@@ -1,0 +1,120 @@
+/* Autolife UI extension styles */
+.autolife-panel {
+    margin-top: 8px;
+}
+
+.autolife-panel .inline-drawer-content {
+    padding: 8px;
+}
+
+.autolife-section {
+    border-top: 1px solid var(--SmartThemeBorderColor, #444);
+    padding: 10px 4px 6px;
+    margin-top: 8px;
+}
+
+.autolife-section h4 {
+    margin: 0 0 8px;
+    font-size: 1em;
+}
+
+.autolife-status-line {
+    font-size: 0.85em;
+    opacity: 0.85;
+    margin: 4px 0;
+    word-break: break-word;
+}
+
+.autolife-sched-row {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(18px, 1fr)) 52px 52px 1fr 90px 22px;
+    gap: 4px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.autolife-sched-head {
+    font-size: 0.7em;
+    opacity: 0.7;
+    text-align: center;
+}
+
+.autolife-form-grid {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 6px 10px;
+    align-items: center;
+    font-size: 0.9em;
+}
+
+.autolife-form-grid label {
+    font-size: 0.85em;
+    opacity: 0.85;
+}
+
+.autolife-form-grid input[type="text"],
+.autolife-form-grid input[type="number"],
+.autolife-form-grid input[type="password"],
+.autolife-form-grid select {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.autolife-monitor-table {
+    width: 100%;
+    font-size: 0.82em;
+    border-collapse: collapse;
+    margin-top: 6px;
+}
+
+.autolife-monitor-table th,
+.autolife-monitor-table td {
+    padding: 3px 5px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #333);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.autolife-avail-bar {
+    background: rgba(128, 128, 128, 0.25);
+    border-radius: 4px;
+    height: 10px;
+    width: 70px;
+    overflow: hidden;
+}
+
+.autolife-avail-bar > div {
+    height: 100%;
+    background: var(--green, #4caf50);
+    transition: width 0.4s;
+}
+
+.autolife-btn {
+    cursor: pointer;
+    margin: 2px;
+}
+
+.autolife-muted {
+    opacity: 0.6;
+    font-size: 0.8em;
+}
+
+.autolife-toast {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 99999;
+    background: var(--black70a, rgba(0, 0, 0, 0.7));
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 8px;
+    padding: 10px 14px;
+    max-width: 320px;
+    font-size: 0.9em;
+}
+
+.autolife-typing {
+    font-style: italic;
+    opacity: 0.8;
+    font-size: 0.85em;
+    padding: 2px 6px;
+}

@@ -1,0 +1,7 @@
+{
+    "name": "sillytavern-autolife",
+    "version": "0.1.0",
+    "description": "Autolife: characters with schedules and a life of their own. Server plugin for SillyTavern.",
+    "type": "module",
+    "main": "index.js"
+}

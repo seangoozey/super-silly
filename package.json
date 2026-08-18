@@ -1,0 +1,14 @@
+{
+    "name": "super-silly",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Autonomous SillyTavern + Ollama + Telegram: characters with a schedule and a life of their own.",
+    "type": "module",
+    "scripts": {
+        "test": "node --test tests/",
+        "card": "node tools/card-tools.mjs"
+    },
+    "engines": {
+        "node": ">=20"
+    }
+}
