@@ -1,7 +1,7 @@
 // Autolife card extension schema: defaults + validation.
 // Pure module, no dependencies. Shared by the server plugin and the card CLI.
 
-export const SPEC_VERSION = '1.0';
+export const SPEC_VERSION = '1.1';
 export const EXTENSION_KEY = 'autolife';
 
 export const DEFAULTS = Object.freeze({
@@ -28,6 +28,11 @@ export const DEFAULTS = Object.freeze({
     },
     journal: {
         enabled: true,
+    },
+    memory: {
+        enabled: true,
+        max_entries: 4000,
+        retrieve_count: 3,
     },
 });
 
@@ -178,6 +183,19 @@ export function validateAutolife(raw) {
         }
     }
 
+    if (raw.memory !== undefined) {
+        if (!isPlainObject(raw.memory)) {
+            errors.push('memory must be an object.');
+        } else {
+            const m = raw.memory;
+            if (m.enabled !== undefined && typeof m.enabled !== 'boolean') {
+                errors.push('memory.enabled must be a boolean.');
+            }
+            checkRange(m, 'retrieve_count', 0, 10, errors, 'memory');
+            checkRange(m, 'max_entries', 100, 100000, errors, 'memory');
+        }
+    }
+
     return { valid: errors.length === 0, errors, warnings };
 }
 
@@ -245,6 +263,7 @@ export function normalizeAutolife(raw) {
     out.initiative = { ...d.initiative, ...(raw?.initiative ?? {}) };
     out.relationship = { ...d.relationship, ...(raw?.relationship ?? {}) };
     out.journal = { ...d.journal, ...(raw?.journal ?? {}) };
+    out.memory = { ...d.memory, ...(raw?.memory ?? {}) };
     out.schedule = (Array.isArray(out.schedule) ? out.schedule : []).map((b) => ({
         days: b.days ?? [0, 1, 2, 3, 4, 5, 6],
         availability: b.availability ?? 0.5,

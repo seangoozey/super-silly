@@ -4,7 +4,8 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01 } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, cleanModelOutput, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildMemoryContext, cleanModelOutput, NUM_PREDICT } from './llm.js';
+import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -13,7 +14,7 @@ const BACKOFF_MINUTES = [2, 5, 10, 20, 40];
 export class Engine {
     /**
      * @param {{ cards: object, store: object, chatStore: object, ollama: object,
-     *           rng?: {float:()=>number}, nowFn?: ()=>Date, log?: (msg:string)=>void,
+     *           memory?: object, rng?: {float:()=>number}, nowFn?: ()=>Date, log?: (msg:string)=>void,
      *           emit?: (type:string, data:object)=>void, transports?: Array<object> }} deps
      */
     constructor(deps) {
@@ -21,6 +22,7 @@ export class Engine {
         this.store = deps.store;
         this.chatStore = deps.chatStore;
         this.ollama = deps.ollama;
+        this.memory = deps.memory ?? null;
         this.rng = deps.rng ?? { float: Math.random };
         this.nowFn = deps.nowFn ?? (() => new Date());
         this.log = deps.log ?? ((m) => console.log(`[Autolife] ${m}`));
@@ -135,6 +137,75 @@ export class Engine {
         return this.settings.model?.current || this.settings.model?.primary || 'llama3.2:3b';
     }
 
+    // ------------------------------------------------------------ memory (RAG)
+
+    /** Embed with the configured model; auto-pull it on first use; degrade quietly. */
+    async #embedNow(text) {
+        const model = this.settings.memory?.embed_model;
+        if (!model || !this.memory) return null;
+        try {
+            const vec = await this.ollama.embed(text, model);
+            this.embedFailNoted = false;
+            return vec;
+        } catch (err) {
+            try {
+                if (!(await this.ollama.hasModel(model))) {
+                    this.#audit(null, 'model', `pulling embedding model ${model} (needed for character memory)`);
+                    const ok = await this.ollama.ensureModel(model, (p) => this.emit('model_pull', { model, ...p }));
+                    if (!ok) throw new Error('pull failed');
+                    this.embedFailNoted = false;
+                    return await this.ollama.embed(text, model);
+                }
+            } catch { /* fall through to degraded mode */ }
+            if (!this.embedFailNoted) {
+                this.embedFailNoted = true;
+                this.#audit(null, 'memory', `embedding unavailable (${String(err?.message ?? err).slice(0, 120)}) — memory indexing paused until it works`);
+            }
+            return null;
+        }
+    }
+
+    /** Index one message (user or character). Never throws. */
+    async #remember(entry, chatFile, role, text, sendDate) {
+        if (!this.memory || !text?.trim()) return;
+        try {
+            const vec = await this.#embedNow(text);
+            if (!vec) return;
+            this.memory.append(entry.name, {
+                ts: this.nowFn().toISOString(),
+                role,
+                text,
+                vec,
+                chatFile,
+                key: messageKey(sendDate, role, text),
+            }, this.settings.memory?.embed_model);
+        } catch (err) {
+            this.log(`memory append failed for "${entry.name}": ${err.message}`);
+        }
+    }
+
+    /** Retrieve relevant older texts as a prompt block (or null). */
+    async #recallFor(entry, history) {
+        const mem = entry.autolife.memory;
+        if (!this.memory || !mem?.enabled || (mem.retrieve_count ?? 3) <= 0) return null;
+        const lastUser = [...history].reverse().find((m) => m.is_user);
+        if (!lastUser?.mes?.trim()) return null;
+        const queryVec = await this.#embedNow(lastUser.mes);
+        if (!queryVec) return null;
+        const tail = history.slice(-24);
+        const excludeKeys = new Set(tail.map((m) => messageKey(m.send_date, m.is_user ? 'user' : 'assistant', m.mes)));
+        const norm = (t) => String(t).toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80);
+        const excludeTextPrefixes = new Set(tail.map((m) => norm(m.mes)));
+        const hits = this.memory.search(entry.name, queryVec, {
+            k: mem.retrieve_count ?? 3,
+            excludeKeys,
+            excludeTextPrefixes,
+        }).filter((h) => h.score > 0.15);
+        if (!hits.length) return null;
+        this.#audit(entry.name, 'memory', `recalled ${hits.length} older text${hits.length > 1 ? 's' : ''} for context (top match ${new Date(hits[0].ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, similarity ${(hits[0].score * 100).toFixed(0)}%)`);
+        return buildMemoryContext(hits, this.chatStore.userName, entry.name);
+    }
+
     // ------------------------------------------------------------ inbound
 
     /**
@@ -151,9 +222,14 @@ export class Engine {
         const state = this.#state(entry);
         this.#ensureChat(entry, state);
 
+        let sendDate = now.toISOString();
         if (source === 'telegram') {
-            this.chatStore.appendMessage(entry.name, state.chatFile, this.chatStore.userMessage(mes, now));
+            const userMsg = this.chatStore.userMessage(mes, now);
+            sendDate = userMsg.send_date;
+            this.chatStore.appendMessage(entry.name, state.chatFile, userMsg);
         }
+        // index the user message for long-term memory (works from both surfaces)
+        await this.#remember(entry, state.chatFile, 'user', String(mes ?? ''), sendDate);
 
         const life = evaluate(entry.autolife, now);
         const userRepliedToInitiative = state.lastInitiativeAt && (!state.lastUserMessageAt || new Date(state.lastInitiativeAt) > new Date(state.lastUserMessageAt));
@@ -223,8 +299,38 @@ export class Engine {
             if (!state.enabled || state.paused) continue;
             try {
                 await this.#runCharacter(entry, state, now);
+                await this.#backfillMemory(entry, state);
             } catch (err) {
                 this.log(`"${entry.name}" tick failed: ${err?.stack ?? err}`);
+            }
+        }
+    }
+
+    /** Progressive backfill of chat history into the memory index, oldest first. */
+    lastMemoryEmit = new Map();
+
+    async #backfillMemory(entry, state) {
+        const mem = entry.autolife.memory;
+        if (!this.memory || !mem?.enabled || !state.chatFile) return;
+        const { added, remaining } = await this.memory.backfill(
+            entry.name,
+            this.chatStore,
+            state.chatFile,
+            (t) => this.#embedNow(t),
+            { limit: 20, maxEntries: mem.max_entries ?? 4000 },
+        ).catch((err) => {
+            this.log(`memory backfill failed for "${entry.name}": ${err.message}`);
+            return { added: 0, remaining: 0 };
+        });
+        if (remaining > 0 || added > 0) {
+            const last = this.lastMemoryEmit.get(entry.name) ?? 0;
+            if (Date.now() - last > 60_000) {
+                this.lastMemoryEmit.set(entry.name, Date.now());
+                this.emit('memory', {
+                    character: entry.name,
+                    indexed: this.memory.count(entry.name, this.settings.memory?.embed_model),
+                    remaining,
+                });
             }
         }
     }
@@ -354,16 +460,20 @@ export class Engine {
             journal: state.journal,
             userName: this.chatStore.userName,
         });
+
+        const numPredict = NUM_PREDICT[entry.autolife.behavior?.avg_message_length ?? 'short'] ?? 160;
+        const memoryBlock = ['reply', 'catchup', 'followup'].includes(kind)
+            ? await this.#recallFor(entry, history)
+            : null;
+        const candidates = [...new Set([this.settings.model?.current, this.settings.model?.fallback].filter(Boolean))];
         const messages = buildChatMessages({
             system,
             history,
             characterName: entry.name,
             userName: this.chatStore.userName,
             kind,
+            memory: memoryBlock,
         });
-
-        const numPredict = NUM_PREDICT[entry.autolife.behavior?.avg_message_length ?? 'short'] ?? 160;
-        const candidates = [...new Set([this.settings.model?.current, this.settings.model?.fallback].filter(Boolean))];
 
         let text = '';
         let usedModel = null;
@@ -407,7 +517,9 @@ export class Engine {
         }
         if (text.length > 1500) text = text.slice(0, 1500).trim();
 
-        this.chatStore.appendMessage(entry.name, state.chatFile, this.chatStore.characterMessage(entry.name, text, now));
+        const charMsg = this.chatStore.characterMessage(entry.name, text, now);
+        this.chatStore.appendMessage(entry.name, state.chatFile, charMsg);
+        this.#remember(entry, state.chatFile, 'assistant', text, charMsg.send_date);
         state.lastCharMessageAt = now.toISOString();
         state.lastContactAt = now.toISOString();
         if (kind === 'initiative') {
@@ -511,6 +623,7 @@ export class Engine {
                 lastInitiativeAt: state.lastInitiativeAt ?? null,
                 chatFile: state.chatFile,
                 onTelegram: boundChats.includes(entry.name),
+                memoryEntries: this.memory ? this.memory.count(entry.name, this.settings.memory?.embed_model) : 0,
                 initiative: {
                     ...init,
                     todayCount,

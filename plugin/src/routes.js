@@ -43,7 +43,7 @@ const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
  *           addSseClient: (res:object)=>void, restartTransport: ()=>void, log: (m:string)=>void }} deps
  */
 export function registerRoutes(router, deps) {
-    const { engine, store, cards, chatStore, ollama, transport, charactersDir, broadcast, addSseClient, restartTransport, log } = deps;
+    const { engine, store, cards, chatStore, ollama, memory, transport, charactersDir, broadcast, addSseClient, restartTransport, log } = deps;
 
     /** Persist + broadcast an audit entry from a route action. */
     const audit = (character, kind, text) => {
@@ -201,6 +201,13 @@ export function registerRoutes(router, deps) {
         const settings = store.loadSettings();
         if (body.model) settings.model = { ...settings.model, ...body.model };
         if (body.engine) settings.engine = { ...settings.engine, ...body.engine };
+        if (body.memory) {
+            const before = settings.memory?.embed_model;
+            settings.memory = { ...settings.memory, ...body.memory };
+            if (body.memory.embed_model && body.memory.embed_model !== before) {
+                audit(null, 'memory', `embedding model changed: ${before ?? '(none)'} -> ${body.memory.embed_model} — existing indexes will rebuild`);
+            }
+        }
         if (body.telegram) {
             // empty token string means "keep existing"; explicit null clears it
             if (typeof body.telegram.token === 'string' && body.telegram.token.trim()) settings.telegram.token = body.telegram.token.trim();
@@ -276,6 +283,30 @@ export function registerRoutes(router, deps) {
                 broadcast('model_pull', { model, status: `failed: ${err.message}` });
                 audit(null, 'model', `model pull FAILED: ${model} (${err.message})`);
             });
+    }));
+
+    // ---- memory (RAG) ----
+    router.get('/memory', wrap(async (req, res) => {
+        const settings = store.loadSettings();
+        const name = req.query?.name ? String(req.query.name) : null;
+        const chars = engine.cards.autolifeCharacters();
+        const characters = chars.map((c) => {
+            const stats = memory.stats(c.name, settings.memory?.embed_model);
+            const state = store.loadState(c.name, { initialRelationship: c.autolife?.relationship?.initial ?? 20 });
+            const chatCount = state.chatFile ? chatStore.readMessages(c.name, state.chatFile).length : 0;
+            return { name: c.name, enabled: !!c.autolife.memory?.enabled, ...stats, chatMessages: chatCount, chatFile: state.chatFile };
+        }).filter((c) => !name || c.name === name);
+        res.json({ embedModel: settings.memory?.embed_model ?? 'nomic-embed-text', characters });
+    }));
+
+    router.post('/memory/rebuild', wrap(async (req, res) => {
+        const body = await readBody(req);
+        const entry = cards.find(String(body.name ?? ''));
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${body.name}".` });
+        memory.rebuild(entry.name);
+        audit(entry.name, 'memory', 'memory index cleared — rebuilding from chat history');
+        broadcast('memory', { character: entry.name, indexed: 0 });
+        res.json({ ok: true });
     }));
 
     // ---- schedule preview (used by the panel's grid editor) ----

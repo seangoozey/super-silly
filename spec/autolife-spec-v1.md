@@ -1,6 +1,6 @@
-# Autolife — Autonomous Character Card Extension, Version 1.0
+# Autolife — Autonomous Character Card Extension, Version 1.1
 
-Status: **Draft v1.0** (implementation target for super-silly v0.1)
+Status: **v1.1** (implementation target for super-silly v0.2; 1.0 cards remain fully valid)
 Base: [Character Card Spec V3](https://github.com/kwaroran/character-card-spec-v3) (`spec: "chara_card_v3"`, `spec_version: "3.0"`)
 
 ## 1. Overview
@@ -116,8 +116,11 @@ the base spec).
     "relationship": { ... },
 
     // Engine-maintained life journal. See §8.
-    "journal": { ... }
-}
+    "journal": { ... },
+
+    // Long-term recall over chat history (RAG). See §8a.
+    "memory": { ... }
+}}}
 ```
 
 ### 3.1 Schedule evaluation
@@ -249,6 +252,36 @@ The journal is never shown to the user directly (a future spec version may
 add a consent flag for surfacing it); it exists so proactive messages have
 material beyond the chat history.
 
+## 8a. `memory` — long-term recall over history (RAG)
+
+```jsonc
+{
+    // Master switch. When true, the engine embeds every message (both sides)
+    // into a per-character vector index maintained in engine state, and at
+    // reply time retrieves the most semantically relevant texts that fall
+    // OUTSIDE the live chat tail, injecting them as private context.
+    // Designed for characters that run for months. Default: true.
+    "enabled": true,
+
+    // How many older texts to inject into a reply prompt (0-10).
+    // 2-3 keeps the context budget at a few hundred tokens. Default: 3.
+    "retrieve_count": 3,
+
+    // Ring size of the per-character index; oldest entries are pruned beyond
+    // this. At ~one exchange per day this is several years of history.
+    // Default: 4000.
+    "max_entries": 4000
+}
+```
+
+The embedding model is an **engine setting**, not a card field (vectors are
+meaningless across engines/models): the reference implementation uses
+`nomic-embed-text` via Ollama and auto-pulls it on first use. Changing the
+model archives and rebuilds indexes. Retrieved texts are injected with the
+same framing as the journal — private memory to weave in, never to recite or
+mention. Retrieval runs for reply-like generations (reply, catch-up,
+follow-up) but not initiative, which stays anchored to the present.
+
 ## 9. Validation rules (summary)
 
 A `autolife` object is valid when:
@@ -262,6 +295,8 @@ A `autolife` object is valid when:
 - `initiative.min_gap_minutes` ≥ 1, `max_per_day` ≥ 0,
   `followup_on_unread_hours` ≥ 0;
 - `relationship.initial` ∈ [0,100];
+- `memory`, if present, has `retrieve_count` ∈ [0,10] and
+  `max_entries` ∈ [100, 100000];
 - no unknown *type* collisions (unknown keys are preserved but ignored).
 
 Validators MUST return all problems at once (not fail-fast) so card tools can
@@ -284,5 +319,6 @@ list; the plugin uses the same module.
 
 ## 11. Changelog
 
+- **1.1** — `memory` section: engine-side RAG over chat history (`enabled`, `retrieve_count`, `max_entries`).
 - **1.0** — initial spec: schedule, behavior, initiative, relationship.initial,
   journal.enabled.

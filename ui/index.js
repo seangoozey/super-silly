@@ -105,6 +105,12 @@ function panelHtml() {
                             <input type="number" id="autolife_rel" min="0" max="100" value="20">
                             <label>Keep a private journal</label>
                             <input type="checkbox" id="autolife_journal" checked>
+                            <label>Long-term memory (RAG)</label>
+                            <input type="checkbox" id="autolife_mem_on" checked>
+                            <label>Recalled texts per reply (0–10)</label>
+                            <input type="number" id="autolife_mem_k" min="0" max="10" value="3">
+                            <label>Memory index size (max entries)</label>
+                            <input type="number" id="autolife_mem_max" min="100" max="100000" step="100" value="4000">
                         </div>
 
                         <div style="margin-top:10px;">
@@ -127,6 +133,20 @@ function panelHtml() {
                     </h4>
                     <div class="autolife-muted">Every engine decision — replies (instant/delayed/ignored), initiative rolls and blocks, retries, journal notes. Also live in Telegram via /audit on.</div>
                     <div id="autolife_audit_feed" class="autolife-audit-feed"></div>
+                </div>
+
+                <div class="autolife-section">
+                    <h4>Memory <span class="autolife-muted">(RAG over chat history)</span></h4>
+                    <div class="autolife-form-grid">
+                        <label>Embedding model (Ollama)</label>
+                        <input type="text" id="autolife_embed_model" placeholder="nomic-embed-text">
+                    </div>
+                    <div style="margin-top:6px;">
+                        <button class="menu_button autolife-btn" id="autolife_embed_save">Save model</button>
+                        <span id="autolife_embed_msg" class="autolife-muted"></span>
+                    </div>
+                    <div class="autolife-muted" style="margin-top:4px;">Pulled automatically on first use (~274 MB for nomic-embed-text). Changing the model rebuilds all indexes.</div>
+                    <div style="overflow-x:auto;"><table class="autolife-monitor-table" id="autolife_memory_table"></table></div>
                 </div>
 
                 <div class="autolife-section">
@@ -319,6 +339,9 @@ async function loadCharacterEditor() {
         $('#autolife_followup').val(a.initiative.followup_on_unread_hours);
         $('#autolife_rel').val(a.relationship.initial);
         $('#autolife_journal').prop('checked', !!a.journal.enabled);
+        $('#autolife_mem_on').prop('checked', a.memory?.enabled ?? true);
+        $('#autolife_mem_k').val(a.memory?.retrieve_count ?? 3);
+        $('#autolife_mem_max').val(a.memory?.max_entries ?? 4000);
         $('#autolife_sched_rows').html((a.schedule.length ? a.schedule : []).map(schedRowHtml).join(''));
     } catch {
         $('#autolife_enable').prop('checked', false);
@@ -328,7 +351,7 @@ async function loadCharacterEditor() {
 
 function buildAutolifeFromForm() {
     return {
-        version: '1.0',
+        version: '1.1',
         timezone: $('#autolife_tz').val().trim() || 'UTC',
         schedule: readSchedRows(),
         behavior: {
@@ -348,6 +371,11 @@ function buildAutolifeFromForm() {
         },
         relationship: { initial: Number($('#autolife_rel').val()) },
         journal: { enabled: $('#autolife_journal').prop('checked') },
+        memory: {
+            enabled: $('#autolife_mem_on').prop('checked'),
+            retrieve_count: Number($('#autolife_mem_k').val()),
+            max_entries: Number($('#autolife_mem_max').val()),
+        },
     };
 }
 
@@ -406,6 +434,28 @@ function refreshModelButtons() {
     } else {
         $pull.prop('disabled', false).text('Pull');
     }
+}
+
+// ---------------------------------------------------------------- memory section
+
+async function loadMemorySection() {
+    try {
+        const m = await api('/memory');
+        $('#autolife_embed_model').val(m.embedModel);
+        const rows = m.characters.map((c) => {
+            const pct = c.chatMessages ? Math.min(100, Math.round((c.entries / c.chatMessages) * 100)) : 0;
+            return `<tr>
+                <td><b>${c.name}</b>${c.enabled ? '' : ' <span class="autolife-muted">(off)</span>'}</td>
+                <td>${c.entries} indexed</td>
+                <td>${c.chatMessages} in chat${pct > 0 && pct < 100 ? ` · backfilling ${pct}%` : ''}</td>
+                <td>${c.model ?? '—'}</td>
+                <td><a class="autolife-btn" data-memrebuild="${c.name}" title="rebuild index from chat history"><i class="fa-solid fa-rotate-left"></i></a></td>
+            </tr>`;
+        });
+        $('#autolife_memory_table').html(rows.length
+            ? '<tr><th>character</th><th>memory</th><th>source</th><th>embed model</th><th></th></tr>' + rows.join('')
+            : '<tr><td class="autolife-muted">No Autolife characters.</td></tr>');
+    } catch { /* plugin offline */ }
 }
 
 // ---------------------------------------------------------------- toasts / typing
@@ -531,6 +581,9 @@ function connectEvents() {
                     refreshStatus();
                 }
                 break;
+            case 'memory':
+                loadMemorySection();
+                break;
             case 'model_changed':
                 loadModelSection();
                 refreshStatus();
@@ -588,6 +641,22 @@ function wireEvents() {
 
     $('#autolife_audit_filter').on('change', applyAuditFilter);
     $('#autolife_audit_refresh').on('click', loadAudit);
+
+    $('#autolife_embed_save').on('click', async () => {
+        const model = $('#autolife_embed_model').val().trim();
+        const msg = $('#autolife_embed_msg').text('saving…');
+        try {
+            await api('/settings', 'POST', { memory: { embed_model: model } });
+            msg.text('saved ✓ — indexes rebuild automatically');
+            loadMemorySection();
+        } catch (e) { msg.text(`error: ${e.message}`); }
+        setTimeout(() => msg.text(''), 5000);
+    });
+
+    $(document).on('click', '[data-memrebuild]', (ev) => {
+        const name = $(ev.currentTarget).data('memrebuild');
+        api('/memory/rebuild', 'POST', { name }).then(loadMemorySection).catch((e) => toast(e.message));
+    });
 
     $('#autolife_tg_save').on('click', async () => {
         const token = $('#autolife_tg_token').val().trim();
@@ -652,6 +721,7 @@ jQuery(() => {
             loadTelegramSection();
             loadModelSection();
             loadAudit();
+            loadMemorySection();
             setInterval(refreshStatus, 30_000);
             setInterval(loadAudit, 120_000);
         });

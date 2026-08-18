@@ -161,6 +161,23 @@ export class OllamaClient {
         return String(json?.message?.content ?? '').trim();
     }
 
+    /**
+     * Embed a text with an Ollama embedding model.
+     * @returns {Promise<number[]>}
+     */
+    async embed(text, model) {
+        const res = await this.fetchImpl(`${this.baseUrl}/api/embeddings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, prompt: String(text).slice(0, 4000) }),
+            signal: this._signal(60_000),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(`Ollama /api/embeddings -> HTTP ${res.status}: ${json.error ?? ''}`);
+        if (!Array.isArray(json.embedding) || !json.embedding.length) throw new Error('Ollama returned an empty embedding');
+        return json.embedding;
+    }
+
     _signal(ms) {
         if (!ms) return undefined;
         const controller = new AbortController();
@@ -234,13 +251,28 @@ const DIRECTIVES = {
 };
 
 /**
+ * Format retrieved memory hits as a compact system block for the prompt.
+ * @param {Array<{ts: string, role: string, text: string, score: number}>} hits
+ */
+export function buildMemoryContext(hits, userName, characterName) {
+    const fmt = (ts) => {
+        const d = new Date(ts);
+        return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+    const lines = hits.map((h) => `[${fmt(h.ts)}] ${h.role === 'user' ? userName : characterName}: ${String(h.text).slice(0, 300)}`);
+    return `Texts from earlier in your history with ${userName} (from your own memory — weave them in naturally if relevant, never recite or mention having a memory):\n${lines.join('\n')}`;
+}
+
+/**
  * Assemble the full /api/chat message list.
  * @param {{ system: string, history: Array, characterName: string, userName: string,
- *           kind?: 'reply'|'initiative'|'followup'|'catchup', extra?: string }} req
+ *           kind?: 'reply'|'initiative'|'followup'|'catchup', extra?: string,
+ *           memory?: string }} req
  */
 export function buildChatMessages(req) {
     const messages = [{ role: 'system', content: req.system }];
     messages.push(...historyToOllama(req.history, req.characterName, req.userName));
+    if (req.memory) messages.push({ role: 'system', content: req.memory });
     const directive = DIRECTIVES[req.kind];
     if (directive) messages.push({ role: 'system', content: directive(req.userName) });
     if (req.extra) messages.push({ role: 'system', content: req.extra });

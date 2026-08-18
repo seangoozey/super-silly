@@ -19,6 +19,9 @@ export function defaultSettings() {
         engine: {
             tick_seconds: 30,
         },
+        memory: {
+            embed_model: process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text',
+        },
         telegram: {
             // Token/allowlist: settings file wins, env (set by the container) is the fallback.
             token: '',
@@ -70,6 +73,7 @@ export class StateStore {
             ...saved,
             model: { ...base.model, ...(saved.model ?? {}) },
             engine: { ...base.engine, ...(saved.engine ?? {}) },
+            memory: { ...base.memory, ...(saved.memory ?? {}) },
             telegram: { ...base.telegram, ...(saved.telegram ?? {}) },
         };
         if (!merged.telegram.token && process.env.TELEGRAM_BOT_TOKEN) merged.telegram.token = process.env.TELEGRAM_BOT_TOKEN;

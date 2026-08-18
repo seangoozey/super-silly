@@ -7,6 +7,7 @@ import { Engine } from '../plugin/src/engine.js';
 import { CardRegistry } from '../plugin/src/cards.js';
 import { StateStore } from '../plugin/src/state.js';
 import { ChatStore } from '../plugin/src/chat-store.js';
+import { MemoryStore, messageKey } from '../plugin/src/memory.js';
 import { normalizeAutolife } from '../plugin/src/autolife-schema.js';
 
 // ---------------------------------------------------------------- helpers
@@ -64,10 +65,26 @@ function buildHarness({ card, now = new Date(Date.UTC(2026, 0, 15, 14, 0)), rngV
     const chatStore = new ChatStore({ dataRoot: path.dirname(root), userHandle: path.basename(root) });
 
     const clock = { now };
+    const chatCalls = [];
+    // deterministic fake embeddings: italy/pizza/work keyword dims
+    const fakeEmbed = (text) => {
+        const v = [0, 0, 0];
+        const t = String(text).toLowerCase();
+        v[0] = (t.match(/italy/g) ?? []).length;
+        v[1] = (t.match(/pizza/g) ?? []).length;
+        v[2] = (t.match(/work/g) ?? []).length;
+        const n = Math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2) || 1;
+        return v.map((x) => x / n);
+    };
     const ollama = {
         hasModel: async () => true,
-        chat: async () => reply,
+        chat: async (req) => {
+            chatCalls.push(req.messages);
+            return reply;
+        },
+        embed: async (text) => fakeEmbed(text),
     };
+    const memory = new MemoryStore(path.join(root, 'memory'), () => {});
     const delivered = [];
     const composing = [];
     const events = [];
@@ -81,12 +98,13 @@ function buildHarness({ card, now = new Date(Date.UTC(2026, 0, 15, 14, 0)), rngV
         store,
         chatStore,
         ollama,
+        memory,
         rng: makeRng(rngValues),
         nowFn: () => clock.now,
         emit: (type, data) => events.push({ type, data }),
         transports: [transport],
     });
-    return { engine, cards, store, chatStore, clock, delivered, composing, events, root };
+    return { engine, cards, store, chatStore, memory, clock, delivered, composing, events, root, chatCalls };
 }
 
 async function lastCharMessage(chatStore, character, state) {
@@ -196,6 +214,45 @@ test('initiative: fires when enabled, respects max_per_day and sleep', async () 
     await h.engine.tick(nextDay);
     state = stateOf(h.store, 'Rico');
     assert.equal(state.initiativeDay.count, 1, 'still blocked by daily cap');
+});
+
+test('memory RAG: old texts get recalled into reply prompts', async () => {
+    const card = characterCard('Remmy');
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'on it' });
+
+    // an "old" message from weeks ago, already in the memory index
+    const oldText = 'we finally booked the italy flights for the spring trip';
+    const oldTs = '2026-07-01T12:00:00.000Z';
+    h.memory.append('Remmy', {
+        ts: oldTs,
+        role: 'user',
+        text: oldText,
+        vec: await Promise.resolve(fakeVec('italy italy italy')),
+        chatFile: 'old.jsonl',
+        key: messageKey(oldTs, 'user', oldText),
+    }, 'nomic-embed-text');
+
+    // the fake ollama embeds with italy/pizza/work dims; the harness ollama
+    // uses the same scheme, so a new message about italy retrieves the old one
+    function fakeVec(text) {
+        const t = String(text).toLowerCase();
+        const v = [(t.match(/italy/g) ?? []).length, (t.match(/pizza/g) ?? []).length, (t.match(/work/g) ?? []).length];
+        const n = Math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2) || 1;
+        return v.map((x) => x / n);
+    }
+
+    await h.engine.onInbound({ character: 'Remmy', mes: 'hey did we ever finish the italy itinerary?', source: 'telegram' });
+
+    // reply generated; the last chat call should contain a system message with the old text
+    assert.ok(h.chatCalls.length >= 1);
+    const lastCall = h.chatCalls[h.chatCalls.length - 1];
+    const memMsg = lastCall.find((m) => m.role === 'system' && m.content.includes('from your own memory'));
+    assert.ok(memMsg, 'memory context block present in prompt');
+    assert.ok(memMsg.content.includes('italy flights'));
+    // and the recall was audited
+    assert.ok(h.store.readAudit('Remmy', 50).some((a) => a.kind === 'memory' && /recalled 1 older text/.test(a.text)));
+    // both the old user message and the new exchange got indexed
+    assert.ok(h.memory.count('Remmy', 'nomic-embed-text') >= 3);
 });
 
 test('status() summarizes life state', async () => {

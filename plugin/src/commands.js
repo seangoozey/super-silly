@@ -71,6 +71,7 @@ export function createCommandRegistry(ctx) {
                 '/switch <name> — talk to a character\n' +
                 '/status — what your character is up to\n' +
                 '/audit [on|off] — see every engine decision as it happens\n' +
+                '/memory — long-term memory status\n' +
                 '/model — model control (list/use/pull)\n' +
                 '/pause, /resume — pause the character\'s life\n' +
                 '/upload — attach a character card (.png/.json) to import it\n\n' +
@@ -275,6 +276,22 @@ export function createCommandRegistry(ctx) {
                 `Audit notifications are currently ${binding.audit ? 'ON' : 'OFF'} for ${binding.character}.\n`
                 + '/audit on — every planned action/non-action gets messaged here\n'
                 + '/audit off — silence');
+        },
+    });
+
+    register({
+        name: 'memory',
+        help: 'long-term memory (RAG) stats',
+        run: async (chatId) => {
+            const binding = bindingFor(chatId);
+            if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
+            const status = engine.status().characters.find((c) => c.name === binding.character);
+            const settings = store.loadSettings();
+            await transport.send(chatId,
+                `${binding.character}'s memory:\n` +
+                `- ${status?.memoryEntries ?? 0} texts indexed${status?.memoryEntries ? ' (older conversations are searchable)' : ''}\n` +
+                `- Embedding model: ${settings.memory?.embed_model ?? 'nomic-embed-text'}\n` +
+                '- Recalled automatically when your message relates to older chats — watch for 🔎 "recalled N older texts" audit lines.');
         },
     });
 

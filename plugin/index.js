@@ -14,6 +14,7 @@ import { StateStore } from './src/state.js';
 import { TelegramTransport } from './src/telegram.js';
 import { createCommandRegistry } from './src/commands.js';
 import { registerRoutes } from './src/routes.js';
+import { MemoryStore } from './src/memory.js';
 
 const log = (m) => console.log(`[Autolife] ${m}`);
 
@@ -42,12 +43,14 @@ const USER_HANDLE = process.env.AUTOLIFE_USER || 'default-user';
 const USER_DIR = path.join(DATA_ROOT, USER_HANDLE);
 
 fs.mkdirSync(path.join(USER_DIR, 'autolife', 'state'), { recursive: true });
+fs.mkdirSync(path.join(USER_DIR, 'autolife', 'memory'), { recursive: true });
 fs.mkdirSync(path.join(USER_DIR, 'characters'), { recursive: true });
 
 const store = new StateStore(path.join(USER_DIR, 'autolife'));
 const chatStore = new ChatStore({ dataRoot: DATA_ROOT, userHandle: USER_HANDLE });
 const cards = new CardRegistry(path.join(USER_DIR, 'characters'));
 const ollama = new OllamaClient({ baseUrl: process.env.OLLAMA_URL, log });
+const memory = new MemoryStore(path.join(USER_DIR, 'autolife', 'memory'), (m) => log(`memory: ${m}`));
 
 // ---- SSE hub (feeds the UI extension and mirrors engine events) ----
 const sseClients = new Set();
@@ -67,13 +70,13 @@ function addSseClient(res) {
 }
 
 // ---- engine + telegram ----
-const engine = new Engine({ cards, store, chatStore, ollama, log, emit: broadcast });
+const engine = new Engine({ cards, store, chatStore, ollama, memory, log, emit: broadcast });
 engine.transports = [];
 
 // commands need the transport (to reply) and the transport needs the commands
 // (to dispatch) — break the cycle with a late-bound holder.
 const live = { transport: null };
-const commandCtx = new Proxy({ engine, cards, store, chatStore, log }, {
+const commandCtx = new Proxy({ engine, cards, store, chatStore, memory, log }, {
     get(target, prop) {
         if (prop === 'transport') return live.transport;
         return target[prop];
@@ -124,6 +127,7 @@ async function init(router) {
         cards,
         chatStore,
         ollama,
+        memory,
         transport: transportView,
         charactersDir: cards.dir,
         broadcast,

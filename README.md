@@ -111,6 +111,10 @@ The plugin resolves SillyTavern's root as two directories up from `plugins/autol
 
 On each 30s tick per character: evaluate the schedule → current activity/availability. Inbound message → roll ignore (scaled by busyness) → else roll quick reply (scaled by availability) → else schedule a delayed reply. Separately: initiative rolls (gap + daily cap + awake), one double-text if left on read, catch-ups after missed messages, and occasional journal notes that feed later proactive messages. Full model: `spec/autolife-spec-v1.md`.
 
+### Long-term memory (RAG)
+
+Every message both ways is embedded (default `nomic-embed-text`, auto-pulled, ~274 MB) into a per-character vector index under `data/default-user/autolife/memory/`. On replies, the engine retrieves up to 3 older texts that fall outside the 24-message live tail and injects them as private context — so a character you've run for months still remembers "that thing from August." Manage it in the Autolife panel's **Memory** section (embedding model, per-character index stats, rebuild) or `/memory` on Telegram; every recall shows up in the audit log. Card-level tuning (`memory.enabled / retrieve_count / max_entries`) is in the spec v1.1 and the character editor. Existing chat history is backfilled into the index automatically, ~20 messages per tick.
+
 ## Roadmap (Phase 2+)
 
 Multi-message bursts · typing-speed simulation · deeper relationship tuning · journal-driven life events surfacing · group chats · media messages · Discord transport · charx asset polish · `/schedule` and `/journal` Telegram commands.
