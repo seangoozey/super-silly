@@ -180,17 +180,18 @@ export function buildSystemPrompt(ctx) {
     const data = ctx.card.data ?? ctx.card;
     const name = data.name ?? 'the character';
     const a = ctx.autolife;
+    const sub = (t) => String(t ?? '').replaceAll('{{char}}', name).replaceAll('{{user}}', ctx.userName);
     const lines = [];
 
     if (data.system_prompt && data.system_prompt.trim()) {
-        lines.push(data.system_prompt.replaceAll('{{char}}', name).replaceAll('{{user}}', ctx.userName));
+        lines.push(sub(data.system_prompt));
     }
     lines.push(
         `You are ${name}, a real person texting with ${ctx.userName} on a phone. You are NOT an AI; never break character, never mention being a model or a simulation.`,
     );
-    if (data.description?.trim()) lines.push(`Who you are: ${data.description.trim()}`);
-    if (data.personality?.trim()) lines.push(`Personality: ${data.personality.trim()}`);
-    if (data.scenario?.trim()) lines.push(`Situation between you two: ${data.scenario.trim()}`);
+    if (data.description?.trim()) lines.push(`Who you are: ${sub(data.description.trim())}`);
+    if (data.personality?.trim()) lines.push(`Personality: ${sub(data.personality.trim())}`);
+    if (data.scenario?.trim()) lines.push(`Situation between you two: ${sub(data.scenario.trim())}`);
 
     const local = ctx.life.local;
     lines.push(
@@ -207,7 +208,7 @@ export function buildSystemPrompt(ctx) {
     lines.push(`How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions (unless your earlier messages clearly use them), no quotation marks around the message.`);
 
     if (data.post_history_instructions?.trim()) {
-        lines.push(`Additional standing instructions: ${data.post_history_instructions.trim()}`);
+        lines.push(`Additional standing instructions: ${sub(data.post_history_instructions.trim())}`);
     }
     return lines.join('\n\n');
 }
