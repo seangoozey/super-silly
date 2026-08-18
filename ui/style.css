@@ -89,6 +89,25 @@
     transition: width 0.4s;
 }
 
+.autolife-pull-bar {
+    background: rgba(128, 128, 128, 0.25);
+    border-radius: 4px;
+    height: 12px;
+    width: 100%;
+    overflow: hidden;
+}
+
+.autolife-pull-bar > div {
+    height: 100%;
+    width: 0;
+    background: var(--green, #4caf50);
+    transition: width 0.5s;
+}
+
+.autolife-pull-error {
+    background: #c0392b !important;
+}
+
 .autolife-btn {
     cursor: pointer;
     margin: 2px;

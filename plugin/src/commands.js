@@ -6,6 +6,12 @@ import { relationshipDescriptor } from './schedule.js';
 
 const NOT_YET = (name) => `/${name} is planned but not implemented yet. Coming in a future version.`;
 
+const fmtBytes = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${(b / 1024 ** 2).toFixed(0)} MB`);
+const progressBar = (pct) => {
+    const filled = Math.round(Math.max(0, Math.min(100, pct)) / 10);
+    return '█'.repeat(filled) + '░'.repeat(10 - filled);
+};
+
 export function createCommandRegistry(ctx) {
     const { engine, cards, store, chatStore, log } = ctx;
     const charactersDir = cards.dir;
@@ -148,6 +154,40 @@ export function createCommandRegistry(ctx) {
         },
     });
 
+    /**
+     * Pull a model with one chat message that gets edited at milestones
+     * (~every 10% or 2 min): progress bar, bytes, speed, ETA. Per-event spam
+     * floods the chat; silence hides multi-GB pulls entirely.
+     */
+    async function pullWithChatUpdates(chatId, name) {
+        const first = await transport.send(chatId, `Pulling ${name}…\n${progressBar(0)} 0%`);
+        const messageId = first?.message_id;
+        const edit = (text) => transport.api('editMessageText', { chat_id: chatId, message_id: messageId, text }).catch(() => {});
+        let lastPct = -100;
+        let lastSent = Date.now();
+        try {
+            const ok = await engine.ollama.ensureModel(name, (p) => {
+                if (p.percent === undefined) return;
+                const pct = Math.floor(p.percent);
+                if (!(pct - lastPct >= 10 || Date.now() - lastSent > 120_000)) return;
+                lastPct = pct;
+                lastSent = Date.now();
+                const speed = p.speedBps > 0 ? ` · ${fmtBytes(p.speedBps)}/s` : '';
+                const eta = p.speedBps > 0 && p.total > p.completed
+                    ? ` · ETA ~${Math.max(1, Math.round((p.total - p.completed) / p.speedBps / 60))} min`
+                    : '';
+                edit(`Pulling ${name}\n${progressBar(pct)} ${pct}%\n${fmtBytes(p.completed)} / ${fmtBytes(p.total)}${speed}${eta}`);
+            });
+            if (ok) {
+                await (messageId ? edit(`Done — ${name} is ready ✓`) : transport.send(chatId, `Done — ${name} is ready ✓`));
+            } else {
+                await transport.send(chatId, `Pulling ${name} failed — check the server logs.`);
+            }
+        } catch (err) {
+            await transport.send(chatId, `Pull failed: ${err.message}`);
+        }
+    }
+
     register({
         name: 'model',
         help: 'model control: /model [list | use <name> | pull <name>]',
@@ -180,28 +220,18 @@ export function createCommandRegistry(ctx) {
                 store.saveSettings(settings);
                 engine.refreshSettings();
                 await transport.send(chatId,
-                    `Switched to ${name}.${installed ? '' : '\nIt is not installed yet — pulling now (this can take a while); I will confirm when done.'}`);
-                if (!installed) {
-                    engine.ollama.ensureModel(name, () => {})
-                        .then((ok) => transport.send(chatId, ok ? `Done — ${name} is ready.` : `Pulling ${name} failed. Check the logs.`))
-                        .catch((e) => transport.send(chatId, `Pull failed: ${e.message}`));
-                }
+                    `Switched to ${name}.${installed ? '' : '\nIt is not installed yet — starting the download now.'}`);
+                if (!installed) pullWithChatUpdates(chatId, name).catch(() => {});
                 return;
             }
 
             if (sub === 'pull') {
                 const name = args.slice(1).join(' ').trim();
                 if (!name) return transport.send(chatId, 'Usage: /model pull <name>');
-                await transport.send(chatId, `Pulling ${name}…`);
-                try {
-                    let last = '';
-                    await engine.ollama.pull(name, (s) => {
-                        if (s !== last && /pulling|downloading|verifying|success/i.test(s)) last = s; // progress spam guard
-                    });
-                    await transport.send(chatId, `Done — ${name} is ready.`);
-                } catch (err) {
-                    await transport.send(chatId, `Pull failed: ${err.message}`);
+                if (await engine.ollama.hasModel(name).catch(() => false)) {
+                    return transport.send(chatId, `${name} is already installed — /model use ${name} to switch to it.`);
                 }
+                await pullWithChatUpdates(chatId, name);
                 return;
             }
 

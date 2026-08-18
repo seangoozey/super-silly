@@ -295,7 +295,7 @@ export class Engine {
         for (const model of candidates) {
             try {
                 if (!(await this.ollama.hasModel(model))) {
-                    const ok = await this.ollama.ensureModel(model, (s) => this.emit('model_pull', { model, status: s }));
+                    const ok = await this.ollama.ensureModel(model, (p) => this.emit('model_pull', { model, ...p }));
                     if (!ok) continue;
                 }
                 const raw = await this.ollama.chat({

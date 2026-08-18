@@ -149,6 +149,11 @@ function panelHtml() {
                         <button class="menu_button autolife-btn" id="autolife_model_pull">Pull</button>
                         <span id="autolife_model_msg" class="autolife-muted"></span>
                     </div>
+                    <div id="autolife_pull_progress" style="display:none; margin-top:8px;">
+                        <div class="autolife-status-line" id="autolife_pull_label"></div>
+                        <div class="autolife-pull-bar"><div id="autolife_pull_fill"></div></div>
+                        <div class="autolife-muted" id="autolife_pull_detail"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -347,6 +352,58 @@ function showTyping(character) {
     state.typingTimers.set(character, setTimeout(() => $('.autolife-typing').remove(), 10 * 60 * 1000));
 }
 
+// ---------------------------------------------------------------- pull progress widget
+
+function fmtBytes(b) {
+    if (!Number.isFinite(b) || b <= 0) return '';
+    if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GB`;
+    if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(0)} MB`;
+    return `${Math.round(b / 1024)} KB`;
+}
+
+let pullDoneTimer = null;
+
+function updatePullWidget(d) {
+    const $w = $('#autolife_pull_progress');
+    const $label = $('#autolife_pull_label');
+    const $fill = $('#autolife_pull_fill');
+    const $detail = $('#autolife_pull_detail');
+    clearTimeout(pullDoneTimer);
+    $w.show();
+    $fill.removeClass('autolife-pull-error');
+
+    if (d.status === 'success') {
+        $label.text(`${d.model} ready ✓`);
+        $fill.css('width', '100%');
+        $detail.text('');
+        pullDoneTimer = setTimeout(() => $w.fadeOut(500), 10_000);
+        return;
+    }
+    if (/^failed/.test(d.status ?? '')) {
+        $label.text(`${d.model} — pull failed`);
+        $fill.addClass('autolife-pull-error');
+        $detail.text(d.status);
+        pullDoneTimer = setTimeout(() => $w.fadeOut(500), 20_000);
+        return;
+    }
+    $label.text(`${d.model} — ${d.status}${d.layerCount ? ` (layer ${d.layerCount})` : ''}`);
+    if (d.percent !== undefined) {
+        $fill.css('width', `${Math.min(100, d.percent).toFixed(1)}%`);
+        const parts = [`${fmtBytes(d.completed)} / ${fmtBytes(d.total)}`];
+        if (d.speedBps > 0) {
+            parts.push(`${fmtBytes(d.speedBps)}/s`);
+            if (d.total > d.completed) {
+                const secs = Math.round((d.total - d.completed) / d.speedBps);
+                parts.push(`ETA ${secs > 5400 ? `${Math.round(secs / 3600)} h` : `${Math.max(1, Math.round(secs / 60))} min`}`);
+            }
+        }
+        $detail.text(parts.join(' · '));
+    } else {
+        $fill.css('width', '0%');
+        $detail.text('contacting registry…');
+    }
+}
+
 // ---------------------------------------------------------------- SSE
 
 function connectEvents() {
@@ -388,8 +445,11 @@ function connectEvents() {
                 if (data.type === 'card_updated' && currentCharacterName() === data.character) loadCharacterEditor();
                 break;
             case 'model_pull':
-                $('#autolife_model_msg').text(`${data.model}: ${data.status}`);
-                if (/success|failed/.test(data.status)) setTimeout(() => $('#autolife_model_msg').text(''), 5000);
+                updatePullWidget(data);
+                if (data.status === 'success' || /^failed/.test(data.status ?? '')) {
+                    loadModelSection();
+                    refreshStatus();
+                }
                 break;
             case 'model_changed':
                 loadModelSection();
@@ -472,8 +532,9 @@ function wireEvents() {
     });
     $('#autolife_model_pull').on('click', async () => {
         try {
-            await api('/model/pull', 'POST', { model: chosenModel() });
-            $('#autolife_model_msg').text('pull started — watch progress here');
+            const model = chosenModel();
+            await api('/model/pull', 'POST', { model });
+            updatePullWidget({ model, status: 'starting' });
         } catch (e) { toast(e.message); }
     });
 }

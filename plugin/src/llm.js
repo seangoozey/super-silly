@@ -43,8 +43,12 @@ export class OllamaClient {
 
     /**
      * Pull a model, streaming progress. Resolves true on success.
+     * `onProgress` receives normalized objects:
+     *   { status, total?, completed?, percent?, speedBps?, layers? }
+     * where total/completed are aggregate BYTES across all layers seen so far,
+     * percent is 0-100 and speedBps a smoothed bytes/second estimate.
      * @param {string} name
-     * @param {(status: string) => void} [onProgress]
+     * @param {(info: object) => void} [onProgress]
      */
     async pull(name, onProgress) {
         const res = await this.fetchImpl(`${this.baseUrl}/api/pull`, {
@@ -55,11 +59,43 @@ export class OllamaClient {
         });
         if (!res.ok) throw new Error(`Ollama /api/pull -> HTTP ${res.status}: ${await res.text().catch(() => '')}`);
 
+        // Ollama streams one layer ("digest") at a time with its own byte
+        // counters; aggregate them so callers can show one honest percentage.
+        const layers = new Map(); // digest -> { total, completed }
+        let emaSpeed = 0;
+        let lastBytes = 0;
+        let lastTs = Date.now();
+
         const report = (line) => {
             try {
                 const obj = JSON.parse(line);
-                if (obj.status) onProgress?.(obj.status);
                 if (obj.error) throw new Error(`Pull "${name}" failed: ${obj.error}`);
+                const info = { status: obj.status };
+                if (obj.status === 'downloading' && obj.digest) {
+                    const layer = layers.get(obj.digest) ?? { total: 0, completed: 0 };
+                    if (obj.total) layer.total = obj.total;
+                    if (obj.completed !== undefined) layer.completed = obj.completed;
+                    layers.set(obj.digest, layer);
+
+                    const total = [...layers.values()].reduce((s, l) => s + l.total, 0);
+                    const completed = [...layers.values()].reduce((s, l) => s + l.completed, 0);
+                    const now = Date.now();
+                    const dt = (now - lastTs) / 1000;
+                    if (dt >= 0.5 && completed > lastBytes) {
+                        const inst = (completed - lastBytes) / dt;
+                        emaSpeed = emaSpeed ? emaSpeed * 0.7 + inst * 0.3 : inst;
+                        lastBytes = completed;
+                        lastTs = now;
+                    }
+                    if (total > 0) {
+                        info.total = total;
+                        info.completed = completed;
+                        info.percent = Math.min(100, (completed / total) * 100);
+                        info.speedBps = emaSpeed;
+                        info.layerCount = layers.size;
+                    }
+                }
+                onProgress?.(info);
             } catch (err) {
                 if (err instanceof SyntaxError) return; // partial line
                 throw err;
@@ -76,7 +112,9 @@ export class OllamaClient {
             }
             if (buf.trim()) report(buf);
         } else {
-            report(await res.text()); // non-streaming fetch stub
+            for (const line of (await res.text()).split('\n')) {
+                if (line.trim()) report(line); // non-streaming fetch stub
+            }
         }
         return true;
     }

@@ -248,7 +248,7 @@ export function registerRoutes(router, deps) {
         if (!body.model) return res.status(400).json({ error: 'model required' });
         const model = String(body.model);
         res.json({ started: true });
-        ollama.ensureModel(model, (s) => broadcast('model_pull', { model, status: s }))
+        ollama.ensureModel(model, (p) => broadcast('model_pull', { model, ...p }))
             .then((ok) => broadcast('model_pull', { model, status: ok ? 'success' : 'failed' }))
             .catch((err) => broadcast('model_pull', { model, status: `failed: ${err.message}` }));
     }));
