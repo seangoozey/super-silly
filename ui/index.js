@@ -26,6 +26,15 @@ async function api(path, method = 'GET', body = null) {
     return json;
 }
 
+// ---------------------------------------------------------------- helpers
+
+function currentCharacterName() {
+    if (ST?.characterId >= 0 && ST.characters?.[ST.characterId]?.name) {
+        return ST.characters[ST.characterId].name;
+    }
+    return ST?.name2 ?? null;
+}
+
 // ---------------------------------------------------------------- generation interceptor
 // For Autolife characters the engine owns ALL character output (delays,
 // initiative…). SillyTavern's instant generation would break the sim, so we
@@ -34,7 +43,7 @@ async function api(path, method = 'GET', body = null) {
 globalThis.autolifeGenerateInterceptor = async function (chat, contextSize, abort, type) {
     if (!ST) return;
     if (type === 'quiet' || type === 'impersonate') return;
-    const characterName = ST.name2;
+    const characterName = currentCharacterName();
     if (!characterName) return; // no character / group chat: hands off
     if (!state.enabled.has(characterName)) return;
     abort(true);
@@ -227,7 +236,7 @@ function renderMonitor(characters) {
 }
 
 async function loadCharacterEditor() {
-    const name = ST.name2;
+    const name = currentCharacterName();
     $('#autolife_char_name').text(name ?? '—');
     if (!name) {
         $('#autolife_editor').hide();
@@ -286,7 +295,7 @@ function buildAutolifeFromForm() {
 }
 
 async function saveCard() {
-    const name = ST.name2;
+    const name = currentCharacterName();
     if (!name) return;
     const msg = $('#autolife_save_msg').text('saving…');
     try {
@@ -353,7 +362,7 @@ function connectEvents() {
             case 'character_message': {
                 $('.autolife-typing').remove();
                 refreshStatus();
-                const open = ST.name2;
+                const open = currentCharacterName();
                 if (open === data.character) {
                     const generating = $('#mes_stop').is(':visible');
                     if (!generating && !$('#send_textarea').is(':focus')) {
@@ -372,11 +381,11 @@ function connectEvents() {
                 break;
             case 'ignored':
             case 'state_changed':
-            case 'card_updated':
             case 'bindings_changed':
+            case 'card_updated':
                 refreshStatus();
                 if (data.type === 'bindings_changed') loadTelegramSection();
-                if (data.type === 'card_updated' && ST.name2 === data.character) loadCharacterEditor();
+                if (data.type === 'card_updated' && currentCharacterName() === data.character) loadCharacterEditor();
                 break;
             case 'model_pull':
                 $('#autolife_model_msg').text(`${data.model}: ${data.status}`);
@@ -410,7 +419,7 @@ function wireEvents() {
     $('#autolife_save').on('click', saveCard);
 
     $('#autolife_force').on('click', async () => {
-        const name = ST.name2;
+        const name = currentCharacterName();
         if (!name) return;
         toast(`Asking ${name} to text you now…`);
         try {
@@ -471,12 +480,13 @@ function wireEvents() {
 
 // user messages from the web UI -> engine (decides delay/ignore/…)
 function onUserMessage() {
-    if (!ST?.name2 || !state.enabled.has(ST.name2)) return;
+    const name = currentCharacterName();
+    if (!name || !state.enabled.has(name)) return;
     const chat = ST.chat ?? [];
     const last = chat[chat.length - 1];
     if (!last?.is_user) return;
-    showTyping(ST.name2);
-    api('/inbound', 'POST', { character: ST.name2, mes: String(last.mes ?? '') }).catch(() => {});
+    showTyping(name);
+    api('/inbound', 'POST', { character: name, mes: String(last.mes ?? '') }).catch(() => {});
 }
 
 // ---------------------------------------------------------------- bootstrap

@@ -33,6 +33,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NODE_ENV=production \
     ST_HOME=/home/node/app \
     OLLAMA_HOST=0.0.0.0:11434 \
+    OLLAMA_LIBRARY_PATH=/usr/lib/ollama \
     OLLAMA_MODEL=hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M \
     OLLAMA_FALLBACK_MODEL=hf.co/ReadyArt/Dark-Desires-12B-v1.0-GGUF:Q4_K_M
 
@@ -40,8 +41,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl tini libopenblas0 libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Ollama binary + runners (CPU/CUDA) from the official image
-COPY --from=ollama/ollama:latest /bin/ollama /usr/local/bin/ollama
+# Ollama binary + runners (CPU/CUDA) from the official image.
+# Binary must live at /bin/ollama (as upstream): runner discovery resolves the
+# library root relative to the binary, and /bin -> / -> /lib/ollama hits
+# /usr/lib/ollama via Ubuntu's merged-usr layout.
+COPY --from=ollama/ollama:latest /bin/ollama /bin/ollama
 COPY --from=ollama/ollama:latest /usr/lib/ollama /usr/lib/ollama
 
 # Node runtime (bookworm glibc <= ubuntu 24.04 glibc, binary is compatible)
@@ -61,7 +65,7 @@ RUN chmod +x /entrypoint.sh \
     && mkdir -p /home/node/app/config /home/node/app/data /home/node/app/plugins \
     && rm -f /home/node/app/config.yaml \
     && ln -s config/config.yaml /home/node/app/config.yaml \
-    && ln -s /autolife-seed/plugin /home/node/app/plugins/autolife
+    && cp -r /autolife-seed/plugin /home/node/app/plugins/autolife
 
 VOLUME ["/home/node/app/config", "/home/node/app/data", "/root/.ollama"]
 EXPOSE 8000

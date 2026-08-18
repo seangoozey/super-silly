@@ -4,6 +4,10 @@ listen: true
 port: 8000
 whitelistMode: false
 basicAuthMode: false
+# LAN appliance mode: ST refuses to start with listen:true and no auth
+# unless this is set. Put the container behind a trusted network or add
+# basicAuthMode before exposing it beyond your LAN.
+securityOverride: true
 enableServerPlugins: true
 enableServerPluginsAutoUpdate: false
 browserLaunch:

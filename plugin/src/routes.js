@@ -5,6 +5,15 @@ import { validateAutolife, normalizeAutolife } from './autolife-schema.js';
 import { saveAutolifeToCharacter } from './card-import.js';
 
 function readBody(req) {
+    // SillyTavern's global express.json middleware may already have consumed
+    // and parsed the body — in that case the stream is ended and reading it
+    // again would hang forever. Prefer the parsed body when present.
+    if (req.body !== undefined && req.body !== null && Object.keys(req.body).length > 0) {
+        return Promise.resolve(req.body);
+    }
+    if (req.readableEnded || req.complete) {
+        return Promise.resolve({});
+    }
     return new Promise((resolve, reject) => {
         let data = '';
         req.on('data', (c) => {

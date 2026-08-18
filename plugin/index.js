@@ -17,9 +17,25 @@ import { registerRoutes } from './src/routes.js';
 
 const log = (m) => console.log(`[Autolife] ${m}`);
 
-// <ST root>/plugins/autolife/index.js -> ST root is two levels up.
-const pluginDir = path.dirname(fileURLToPath(import.meta.url));
-const ST_ROOT = process.env.AUTOLIFE_ST_ROOT || path.resolve(pluginDir, '..', '..');
+// Locate the SillyTavern root by walking up from this plugin directory until
+// we hit server.js. We try both the literal import path and its realpath
+// (Node resolves symlinks for module URLs, which breaks naive "../.." math).
+function findStRoot(startDir) {
+    let dir = path.resolve(startDir);
+    for (let i = 0; i < 6; i++) {
+        if (fs.existsSync(path.join(dir, 'server.js'))) return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return null;
+}
+
+const moduleUrl = fileURLToPath(import.meta.url);
+const ST_ROOT = process.env.AUTOLIFE_ST_ROOT
+    || findStRoot(path.dirname(moduleUrl))
+    || findStRoot(path.dirname(fs.realpathSync(moduleUrl)))
+    || path.resolve(path.dirname(moduleUrl), '..', '..');
 
 const DATA_ROOT = process.env.AUTOLIFE_DATA_ROOT || path.join(ST_ROOT, 'data');
 const USER_HANDLE = process.env.AUTOLIFE_USER || 'default-user';
