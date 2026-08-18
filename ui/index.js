@@ -328,12 +328,32 @@ async function loadTelegramSection() {
 async function loadModelSection() {
     try {
         const m = await api('/model/list');
+        const installed = new Set(m.local.map((l) => l.name));
+        state.installedModels = installed;
         const options = [
-            ...m.presets.map((p) => ({ value: p, label: `${p}${p === m.current ? '  (preset, in use)' : '  (preset)'}` })),
-            ...m.local.filter((l) => !m.presets.includes(l.name)).map((l) => ({ value: l.name, label: `${l.name}${l.name === m.current ? '  (in use)' : ''}` })),
+            ...m.presets.map((p) => ({
+                value: p,
+                label: `${p}${p === m.current ? ' · in use' : installed.has(p) ? ' · installed' : ' · NOT downloaded'}`,
+            })),
+            ...m.local.filter((l) => !m.presets.includes(l.name)).map((l) => ({
+                value: l.name,
+                label: `${l.name}${l.name === m.current ? ' · in use' : ''}`,
+            })),
         ];
         $('#autolife_model_select').html(options.map((o) => `<option value="${o.value}" ${o.value === m.current ? 'selected' : ''}>${o.label}</option>`).join(''));
+        refreshModelButtons();
     } catch { /* ignore */ }
+}
+
+/** Pull button reflects the chosen model's install state. */
+function refreshModelButtons() {
+    const chosen = $('#autolife_model_free').val().trim() || $('#autolife_model_select').val();
+    const $pull = $('#autolife_model_pull');
+    if (chosen && state.installedModels?.has(chosen)) {
+        $pull.prop('disabled', true).text('Ready ✓');
+    } else {
+        $pull.prop('disabled', false).text('Pull');
+    }
 }
 
 // ---------------------------------------------------------------- toasts / typing
@@ -523,6 +543,8 @@ function wireEvents() {
     });
 
     const chosenModel = () => $('#autolife_model_free').val().trim() || $('#autolife_model_select').val();
+    $('#autolife_model_select').on('change', refreshModelButtons);
+    $('#autolife_model_free').on('input', refreshModelButtons);
     $('#autolife_model_use').on('click', async () => {
         try {
             await api('/model/use', 'POST', { model: chosenModel() });
