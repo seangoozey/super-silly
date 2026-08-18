@@ -1,9 +1,10 @@
 # super-silly — SillyTavern + Ollama + Autolife in one container.
 #
-#   docker compose --env-file .env -f docker/docker-compose.yml up -d --build
+#   docker compose -f docker/docker-compose.yml up -d --build
 #
-# Copy .env.example to .env at the repo root and edit it (models, telegram,
-# external port). Variables below fall back to the defaults shown if unset.
+# Configuration: copy .env.example to .env in this directory (docker/.env) —
+# Compose auto-discovers it. Variables below fall back to the defaults shown
+# if unset.
 #
 # GPU (NVIDIA hosts with nvidia-container-toolkit): uncomment `gpus: all`.
 # Tesla P40 note: driver branch 550+ required (last branch supporting Pascal).

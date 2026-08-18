@@ -24,16 +24,16 @@ Telegram you ⇄ Bot API ⇄┌──────────── one containe
 
 ```bash
 git clone <this repo> && cd super-silly
-cp .env.example .env          # edit: port, models, telegram (all optional)
-docker compose --env-file .env -f docker/docker-compose.yml up -d --build
+cp docker/.env.example docker/.env   # edit: port, models, telegram (all optional)
+docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-First boot: the container starts Ollama, pulls the default model in the background (multi-GB — watch `docker logs -f supersilly`), and serves SillyTavern on **http://localhost:8000** (override the external port with `SUPERSILLY_PORT` in `.env`). Three example characters (Maya, June, Marcus) are pre-installed.
+First boot: the container starts Ollama, pulls the default model in the background (multi-GB — watch `docker logs -f supersilly`), and serves SillyTavern on **http://localhost:8000** (override the external port with `SUPERSILLY_PORT` in `docker/.env`). Three example characters (Maya, June, Marcus) are pre-installed.
 
 **Dev machine with ≤16 GB VRAM** (e.g. RTX 5060): use the dev override, which runs the 12B model as primary and serves on port 8001 (`SUPERSILLY_DEV_PORT`):
 
 ```bash
-docker compose --env-file .env -f docker/docker-compose.yml -f docker/compose.dev.yml up -d --build
+docker compose -f docker/docker-compose.yml -f docker/compose.dev.yml up -d --build
 ```
 
 **GPU:** install [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host, then uncomment `gpus: all` in `docker/docker-compose.yml` (or run with `--gpus all`). The image works CPU-only too — slow, but the long reply delays honestly fit the texting-sim vibe.
@@ -53,7 +53,7 @@ Both pull directly from HuggingFace via Ollama's `hf.co/` namespace. Switch at r
 
 1. Talk to [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
 2. Get your numeric chat id (message [@userinfobot](https://t.me/userinfobot), or message your bot once and read the id from `docker logs supersilly`).
-3. Either set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_CHAT_IDS` in `.env` (see `.env.example`), or paste them into the **Telegram** section of the Autolife panel (stored server-side only).
+3. Either set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_CHAT_IDS` in `docker/.env` (see `docker/.env.example`), or paste them into the **Telegram** section of the Autolife panel (stored server-side only).
 4. In Telegram: `/chars` → `/switch Maya` → text her like a person. `/status` shows what she's up to; `/upload` imports a `.png`/`.json` card you send as a document.
 
 The allowlist is **fail-closed**: the bot ignores everyone not on it.
@@ -101,7 +101,7 @@ Editing a character's life: open it in SillyTavern → Extensions drawer → **A
 
 ```bash
 npm test                      # engine/schedule/card-io/CLI unit tests (no deps)
-docker compose --env-file .env -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml up -d --build
 curl http://localhost:8000/api/plugins/autolife/status | jq
 ```
 

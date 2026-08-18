@@ -1,7 +1,7 @@
 # Dev override for machines with <=16GB VRAM (e.g. RTX 5060):
 # run the 12B as primary and the 27B as fallback.
 #
-#   docker compose --env-file .env -f docker/docker-compose.yml -f docker/compose.dev.yml up -d --build
+#   docker compose -f docker/docker-compose.yml -f docker/compose.dev.yml up -d --build
 #
 services:
   supersilly:
