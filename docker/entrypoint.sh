@@ -38,6 +38,25 @@ cd "$APP"
 log "running SillyTavern config init"
 node src/server-init.js
 
+# Backstop for the plugin's web-UI pre-connect (covers a very first boot where
+# the plugin runs before settings.json exists): re-check shortly after start.
+(
+    sleep 15
+    node -e "
+const fs = require('fs');
+const p = '$APP/data/default-user/settings.json';
+try {
+    const s = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (s.main_api === 'koboldhorde' && !(s.horde_settings?.models ?? []).length) {
+        s.main_api = 'textgenerationwebui';
+        s.textgeneration_settings = Object.assign({}, s.textgeneration_settings, { api_server: 'ollama' });
+        fs.writeFileSync(p, JSON.stringify(s, null, 4));
+        console.log('[supersilly] web UI pre-connected: Text Completion -> Ollama (http://127.0.0.1:11434)');
+    }
+} catch (e) { /* nothing to do */ }
+"
+) &
+
 # ---------- 2. ollama ----------
 log "starting ollama"
 ollama serve &

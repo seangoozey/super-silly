@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.8';
+const EXT_VERSION = '0.4.9';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -95,6 +95,7 @@ function panelHtml() {
             </div>
             <div class="inline-drawer-content">
                 <div id="autolife_status" class="autolife-status-line">…</div>
+                <div id="autolife_connect_hint" class="autolife-status-line" style="display:none; color:#e0b060;"></div>
 
                 <div class="autolife-form-grid" style="margin-top:6px;">
                     <label>Your name (as characters see you)</label>
@@ -432,6 +433,19 @@ async function refreshStatus() {
         );
         state.enabled = new Set(s.engine.characters.filter((c) => c.enabled && !c.paused).map((c) => c.name));
         state.charStatus = new Map(s.engine.characters.map((c) => [c.name, c]));
+
+        // detect an unconnected web UI (fresh ST defaults to AI Horde) and hint the fix
+        const mainApi = String($('#main_api').val() ?? '');
+        const tgType = String($('#textgen_type').val() ?? '');
+        const webUiUnconnected = mainApi === 'koboldhorde' || (mainApi === 'textgenerationwebui' && tgType && tgType !== 'ollama');
+        $('#autolife_connect_hint').toggle(webUiUnconnected);
+        if (webUiUnconnected) {
+            $('#autolife_connect_hint').html('⚠️ Web-UI chatting is not connected to Ollama'
+                + (mainApi === 'koboldhorde' ? ' (still on the default AI Horde)' : '')
+                + '. Fix: <b>API Connections (🔌) → API: Text Completion → API Type: Ollama → URL http://127.0.0.1:11434 → Connect</b>.'
+                + ' Engine/Telegram texting works regardless.');
+        }
+
         renderMonitor(s.engine.characters);
         populateAuditFilter(s.engine.characters);
         updateChatStrip();

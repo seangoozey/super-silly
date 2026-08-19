@@ -46,6 +46,23 @@ fs.mkdirSync(path.join(USER_DIR, 'autolife', 'state'), { recursive: true });
 fs.mkdirSync(path.join(USER_DIR, 'autolife', 'memory'), { recursive: true });
 fs.mkdirSync(path.join(USER_DIR, 'characters'), { recursive: true });
 
+// Pre-connect the web UI to Ollama: fresh ST boots with AI Horde selected and
+// no model, so manual web chatting fails with "No Horde model selected".
+// Only touches the untouched default; any deliberate API choice is left alone.
+function seedWebUiConnection() {
+    try {
+        const p = path.join(USER_DIR, 'settings.json');
+        const s = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (s.main_api === 'koboldhorde' && !(s.horde_settings?.models ?? []).length) {
+            s.main_api = 'textgenerationwebui';
+            s.textgeneration_settings = { ...(s.textgeneration_settings ?? {}), api_server: 'ollama' };
+            fs.writeFileSync(p, JSON.stringify(s, null, 4));
+            log('web UI pre-connected: Text Completion -> Ollama (http://127.0.0.1:11434)');
+        }
+    } catch { /* settings.json not written yet on very first boot — entrypoint backstop covers it */ }
+}
+seedWebUiConnection();
+
 const store = new StateStore(path.join(USER_DIR, 'autolife'));
 const chatStore = new ChatStore({ dataRoot: DATA_ROOT, userHandle: USER_HANDLE });
 const cards = new CardRegistry(path.join(USER_DIR, 'characters'));
