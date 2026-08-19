@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.0';
+const EXT_VERSION = '0.4.1';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -279,7 +279,10 @@ function panelModalHtml() {
 let panelChar = null;
 
 async function openCharacterPanel(name) {
-    if (!name) return;
+    if (!name) {
+        toast('No character selected — open a character first, or click a status chip on a tile.');
+        return;
+    }
     panelChar = name;
     $('#autolife_panel_overlay').show();
     await refreshPanel();
@@ -439,7 +442,7 @@ function renderMonitor(characters) {
             <a class="autolife-btn" data-force="${c.name}" title="force a message now"><i class="fa-solid fa-bolt"></i></a>
             <a class="autolife-btn" data-pause="${c.name}" data-paused="${c.paused ? 1 : 0}" title="${c.paused ? 'resume' : 'pause'}"><i class="fa-solid fa-${c.paused ? 'play' : 'pause'}"></i></a>`;
         return `<tr>
-            <td><b>${c.name}</b>${c.paused ? ' <span class="autolife-muted">(paused)</span>' : ''}</td>
+            <td data-panelname="${c.name}" class="autolife-panel-launch" title="open the Autolife panel"><b>${c.name}</b>${c.paused ? ' <span class="autolife-muted">(paused)</span>' : ''}</td>
             <td>${c.activity}<div class="autolife-avail-bar"><div style="width:${avail}%"></div></div></td>
             <td>${c.localTime}</td>
             <td>rel ${Math.round(c.relationship)}</td>
@@ -912,13 +915,19 @@ function wireEvents() {
     $('#autolife_add_block').on('click', () => $('#autolife_sched_rows').append(schedRowHtml()));
     $(document).on('click', '.autolife-del-block', (ev) => $(ev.currentTarget).closest('.autolife-sched-row').remove());
 
-    $('#autolife_enable').on('change', (ev) => {
+    // editor-section controls are DELEGATED: the section is created by the
+    // watchdog, possibly after these bindings run — direct binding would miss it
+    $(document).on('change', '#autolife_enable', (ev) => {
         const on = ev.target.checked;
-        const name = currentCharacterName();
+        const name = currentCharacterName() ?? lastEditorLoad.name;
         if (!name) return;
         api('/enable', 'POST', { name, enabled: on })
             .then(() => { refreshStatus(); loadCharacterEditor(); })
             .catch((e) => toast(`${on ? 'enable' : 'disable'} failed: ${e.message}`));
+    });
+
+    $(document).on('click', '#autolife_open_panel', () => {
+        openCharacterPanel(currentCharacterName() ?? lastEditorLoad.name);
     });
 
     $('#autolife_save').on('click', saveCard);
@@ -979,6 +988,17 @@ function wireEvents() {
         ev.preventDefault();
         const name = $(ev.currentTarget).data('name');
         if (name) openCharacterPanel(name);
+    });
+
+    // monitor table names open the panel too
+    $(document).on('click', '.autolife-panel-launch', (ev) => {
+        const name = $(ev.currentTarget).data('panelname');
+        if (name) openCharacterPanel(name);
+    });
+
+    // ESC closes the panel
+    $(document).on('keydown', (ev) => {
+        if (ev.key === 'Escape' && panelChar) closeCharacterPanel();
     });
 
     // --- monitor buttons ---
@@ -1097,7 +1117,7 @@ function editorSectionHome() {
 
 function startEditorWatchdog() {
     let wasPopupOpen = false;
-    setInterval(() => {
+    const tick = () => {
         const $home = editorSectionHome();
         if (!$home) return;
         let $sec = $('.autolife-editor-section');
@@ -1116,7 +1136,9 @@ function startEditorWatchdog() {
                 loadCharacterEditor();
             }
         }
-    }, 1000);
+    };
+    tick(); // inject immediately if the editor form is already in the DOM
+    setInterval(tick, 1000);
 }
 
 jQuery(() => {
