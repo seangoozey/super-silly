@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.1';
+const EXT_VERSION = '0.4.2';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -100,7 +100,7 @@ function panelHtml() {
                         <input type="text" id="autolife_embed_model" placeholder="nomic-embed-text">
                     </div>
                     <div style="margin-top:6px;">
-                        <button class="menu_button autolife-btn" id="autolife_embed_save">Save model</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_embed_save">Save model</button>
                         <span id="autolife_embed_msg" class="autolife-muted"></span>
                     </div>
                     <div class="autolife-muted" style="margin-top:4px;">Pulled automatically on first use (~274 MB for nomic-embed-text). Changing the model rebuilds all indexes.</div>
@@ -116,7 +116,7 @@ function panelHtml() {
                         <input type="text" id="autolife_tg_ids" placeholder="comma separated, e.g. 12345678">
                     </div>
                     <div style="margin-top:6px;">
-                        <button class="menu_button autolife-btn" id="autolife_tg_save">Save & restart bridge</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_tg_save">Save & restart bridge</button>
                         <span id="autolife_tg_msg" class="autolife-muted"></span>
                     </div>
                     <div id="autolife_bindings" class="autolife-status-line"></div>
@@ -138,8 +138,8 @@ function panelHtml() {
                         </select>
                     </div>
                     <div style="margin-top:6px;">
-                        <button class="menu_button autolife-btn" id="autolife_model_use">Use</button>
-                        <button class="menu_button autolife-btn" id="autolife_model_pull">Pull</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_model_use">Use</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_model_pull">Pull</button>
                         <span id="autolife_model_msg" class="autolife-muted"></span>
                     </div>
                     <div id="autolife_pull_progress" style="display:none; margin-top:8px;">
@@ -169,7 +169,7 @@ function editorHtml() {
             <div class="inline-drawer-content">
                 <label><input type="checkbox" id="autolife_enable"> Autolife enabled (character carries an autolife block)</label>
                 <div style="margin-top:8px;">
-                    <button class="menu_button autolife-btn" id="autolife_open_panel"><i class="fa-solid fa-id-card"></i> Open Autolife panel</button>
+                    <button type="button" class="menu_button autolife-btn" id="autolife_open_panel"><i class="fa-solid fa-id-card"></i> Open Autolife panel</button>
                     <span class="autolife-muted">schedule · journal · relationship · pause/stop/purge</span>
                 </div>
             </div>
@@ -194,11 +194,11 @@ function panelModalHtml() {
                     <h4>Status &amp; lifecycle</h4>
                     <div id="autolife_panel_statusline" class="autolife-status-line"></div>
                     <div>
-                        <button class="menu_button autolife-btn" id="autolife_panel_add" style="display:none;"><i class="fa-solid fa-plus"></i> Add Autolife to this card</button>
-                        <button class="menu_button autolife-btn" id="autolife_panel_force"><i class="fa-solid fa-bolt"></i> Text me now</button>
-                        <button class="menu_button autolife-btn" id="autolife_panel_pause">Pause</button>
-                        <button class="menu_button autolife-btn" id="autolife_panel_stop">Stop</button>
-                        <button class="menu_button autolife-btn autolife-danger" id="autolife_panel_purge"><i class="fa-solid fa-trash-can"></i> Purge state</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_panel_add" style="display:none;"><i class="fa-solid fa-plus"></i> Add Autolife to this card</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_panel_force"><i class="fa-solid fa-bolt"></i> Text me now</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_panel_pause">Pause</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_panel_stop">Stop</button>
+                        <button type="button" class="menu_button autolife-btn autolife-danger" id="autolife_panel_purge"><i class="fa-solid fa-trash-can"></i> Purge state</button>
                     </div>
                     <div class="autolife-muted">Pause: no replies, no initiative, resumes where it left off. Stop: Autolife off until re-enabled (ST instant replies return). Purge: wipes relationship, journal, pending replies and the memory index — chats and card are kept.</div>
                 </div>
@@ -210,7 +210,7 @@ function panelModalHtml() {
                         <span><input type="number" id="autolife_panel_rel_now" min="0" max="100" style="width:70px">
                         <span id="autolife_panel_rel_desc" class="autolife-muted"></span></span>
                     </div>
-                    <div style="margin-top:4px;"><button class="menu_button autolife-btn" id="autolife_panel_rel_save">Set relationship</button></div>
+                    <div style="margin-top:4px;"><button type="button" class="menu_button autolife-btn" id="autolife_panel_rel_save">Set relationship</button></div>
                 </div>
 
                 <div class="autolife-section">
@@ -261,11 +261,11 @@ function panelModalHtml() {
                         <span class="autolife-muted"> (first match wins; unlisted times = free)</span>
                         <div class="autolife-sched-row autolife-sched-head" id="autolife_sched_head"></div>
                         <div id="autolife_sched_rows"></div>
-                        <button class="menu_button autolife-btn" id="autolife_add_block">+ add block</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_add_block">+ add block</button>
                     </div>
 
                     <div style="margin-top:10px;">
-                        <button class="menu_button autolife-btn" id="autolife_save"><i class="fa-solid fa-floppy-disk"></i> Save card</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_save"><i class="fa-solid fa-floppy-disk"></i> Save card</button>
                         <span id="autolife_save_msg" class="autolife-muted"></span>
                     </div>
                 </div>
@@ -926,7 +926,8 @@ function wireEvents() {
             .catch((e) => toast(`${on ? 'enable' : 'disable'} failed: ${e.message}`));
     });
 
-    $(document).on('click', '#autolife_open_panel', () => {
+    $(document).on('click', '#autolife_open_panel', (ev) => {
+        ev.preventDefault(); // the section lives inside ST's #form_create — never submit it
         openCharacterPanel(currentCharacterName() ?? lastEditorLoad.name);
     });
 
