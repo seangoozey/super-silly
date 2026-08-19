@@ -134,6 +134,7 @@ test('inbound quick reply: decides, generates, writes chat, delivers', async () 
     assert.equal(msgs[1].mes, 'wanna get pizza tonight?');
     assert.equal(msgs[1].is_user, true);
     assert.equal(msgs[2].mes, 'totally, what time?');
+    assert.equal(msgs[2].extra.autolife_kind, 'reply');
     assert.ok(msgs[2].send_date);
     assert.deepEqual(h.delivered, [{ character: 'Quinn', text: 'totally, what time?' }]);
     assert.ok(h.composing.includes('Quinn'));

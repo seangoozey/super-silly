@@ -150,23 +150,23 @@ export class ChatStore {
         };
     }
 
-    static characterMessage(character, mes, date = new Date()) {
+    static characterMessage(character, mes, date = new Date(), extra = {}) {
         return {
             name: character,
             is_user: false,
             is_system: false,
             send_date: date.toISOString(),
             mes: String(mes),
-            extra: {},
+            extra,
             swipes: [String(mes)],
         };
     }
 
-    userMessage(mes, date = new Date()) {
-        return ChatStore.userMessage(this.userName, mes, date);
+    userMessage(mes, date = new Date(), extra = {}) {
+        return ChatStore.userMessage(this.userName, mes, date, extra);
     }
 
-    characterMessage(character, mes, date = new Date()) {
-        return ChatStore.characterMessage(character, mes, date);
+    characterMessage(character, mes, date = new Date(), extra = {}) {
+        return ChatStore.characterMessage(character, mes, date, extra);
     }
 }

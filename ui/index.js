@@ -1,12 +1,20 @@
-// Autolife UI extension: card builder panel + life monitor + Telegram/model setup.
-// Pairs with the `autolife` server plugin (same origin, /api/plugins/autolife/*).
+// Autolife UI extension.
+// P1 chat-native: live incoming messages, typing bubble, life-status strip,
+//    message provenance tags.
+// P2 character integration: config lives inside SillyTavern's character
+//    editor; character tiles get live status chips.
+// P3 dashboard: monitor/audit/memory/telegram/model stay in the extensions
+//    drawer panel (future: full overlay).
+// Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-let ST; // SillyTavern context, filled on APP_READY
+let ST; // SillyTavern context, filled at boot
 const state = {
-    enabled: new Set(), // character names the engine handles (autolife present + enabled)
+    enabled: new Set(),      // engine-managed character names
+    installed: new Set(),    // locally installed ollama models
+    charStatus: new Map(),   // name -> status entry from /status
     typingTimers: new Map(),
 };
 
@@ -25,8 +33,6 @@ async function api(path, method = 'GET', body = null) {
     if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
     return json;
 }
-
-// ---------------------------------------------------------------- helpers
 
 function currentCharacterName() {
     if (ST?.characterId >= 0 && ST.characters?.[ST.characterId]?.name) {
@@ -49,7 +55,7 @@ globalThis.autolifeGenerateInterceptor = async function (chat, contextSize, abor
     abort(true);
 };
 
-// ---------------------------------------------------------------- panel HTML
+// ---------------------------------------------------------------- dashboard panel (extensions drawer)
 
 function panelHtml() {
     return `
@@ -62,65 +68,6 @@ function panelHtml() {
             <div class="inline-drawer-content">
                 <div id="autolife_status" class="autolife-status-line">…</div>
 
-                <div class="autolife-section" id="autolife_editor_section">
-                    <h4>This character</h4>
-                    <label><input type="checkbox" id="autolife_enable"> Enable Autolife for <span id="autolife_char_name">—</span></label>
-                    <div id="autolife_editor" style="display:none; margin-top:8px;">
-                        <div class="autolife-form-grid">
-                            <label for="autolife_tz">Timezone (IANA)</label>
-                            <input type="text" id="autolife_tz" placeholder="America/New_York" value="UTC">
-
-                            <label>Quick reply chance</label>
-                            <input type="number" id="autolife_quick" min="0" max="1" step="0.05" value="0.5">
-                            <label>Delay minutes (min–max)</label>
-                            <span><input type="number" id="autolife_dmin" min="0" max="1440" value="5" style="width:45%"> – <input type="number" id="autolife_dmax" min="0" max="1440" value="90" style="width:45%"></span>
-                            <label>Busy delay multiplier</label>
-                            <input type="number" id="autolife_busyx" min="0.1" max="100" step="0.1" value="3">
-                            <label>Ignore chance</label>
-                            <input type="number" id="autolife_ignore" min="0" max="1" step="0.01" value="0.05">
-                            <label>Message length</label>
-                            <select id="autolife_len"><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select>
-                            <label>Catch-up after missed message</label>
-                            <input type="checkbox" id="autolife_catchup" checked>
-                        </div>
-
-                        <div style="margin-top:8px;">
-                            <b style="font-size:0.85em;">Weekly schedule</b>
-                            <span class="autolife-muted"> (first match wins; unlisted times = free)</span>
-                            <div class="autolife-sched-row autolife-sched-head" id="autolife_sched_head"></div>
-                            <div id="autolife_sched_rows"></div>
-                            <button class="menu_button autolife-btn" id="autolife_add_block">+ add block</button>
-                        </div>
-
-                        <div class="autolife-form-grid" style="margin-top:10px;">
-                            <label>Initiative (texts you first)</label>
-                            <input type="checkbox" id="autolife_init_on">
-                            <label>Initiative min gap (min)</label>
-                            <input type="number" id="autolife_init_gap" min="1" max="10080" value="120">
-                            <label>Initiative max / day</label>
-                            <input type="number" id="autolife_init_max" min="0" max="100" value="4">
-                            <label>Double-text after (h, 0=off)</label>
-                            <input type="number" id="autolife_followup" min="0" max="168" value="6">
-                            <label>Relationship start (0–100)</label>
-                            <input type="number" id="autolife_rel" min="0" max="100" value="20">
-                            <label>Keep a private journal</label>
-                            <input type="checkbox" id="autolife_journal" checked>
-                            <label>Long-term memory (RAG)</label>
-                            <input type="checkbox" id="autolife_mem_on" checked>
-                            <label>Recalled texts per reply (0–10)</label>
-                            <input type="number" id="autolife_mem_k" min="0" max="10" value="3">
-                            <label>Memory index size (max entries)</label>
-                            <input type="number" id="autolife_mem_max" min="100" max="100000" step="100" value="4000">
-                        </div>
-
-                        <div style="margin-top:10px;">
-                            <button class="menu_button autolife-btn" id="autolife_save"><i class="fa-solid fa-floppy-disk"></i> Save card</button>
-                            <button class="menu_button autolife-btn" id="autolife_force"><i class="fa-solid fa-bolt"></i> Force message now</button>
-                            <span id="autolife_save_msg" class="autolife-muted"></span>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="autolife-section">
                     <h4>Life monitor</h4>
                     <div style="overflow-x:auto;"><table class="autolife-monitor-table" id="autolife_monitor"></table></div>
@@ -131,7 +78,7 @@ function panelHtml() {
                         <select id="autolife_audit_filter" style="font-size:0.85em; margin-left:8px;"></select>
                         <a class="autolife-btn" id="autolife_audit_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a>
                     </h4>
-                    <div class="autolife-muted">Every engine decision — replies (instant/delayed/ignored), initiative rolls and blocks, retries, journal notes. Also live in Telegram via /audit on.</div>
+                    <div class="autolife-muted">Every engine decision — replies (instant/delayed/ignored), initiative rolls and blocks, retries, memory recalls, journal notes. Also live in Telegram via /audit on.</div>
                     <div id="autolife_audit_feed" class="autolife-audit-feed"></div>
                 </div>
 
@@ -195,6 +142,78 @@ function panelHtml() {
     </div>`;
 }
 
+// ---------------------------------------------------------------- character editor section (P2)
+// Injected into SillyTavern's character editing panel so Autolife config sits
+// next to description/personality instead of in a drawer.
+
+function editorHtml() {
+    return `
+    <div class="autolife-editor-section">
+        <div class="inline-drawer">
+            <div class="inline-drawer-toggle inline-drawer-header">
+                <b>Autolife — <span id="autolife_char_name">—</span></b>
+            </div>
+            <div class="inline-drawer-content">
+                <label><input type="checkbox" id="autolife_enable"> Enable Autolife for this character</label>
+                <div id="autolife_editor" style="display:none; margin-top:8px;">
+                    <div class="autolife-form-grid">
+                        <label for="autolife_tz">Timezone (IANA)</label>
+                        <input type="text" id="autolife_tz" placeholder="America/New_York" value="UTC">
+
+                        <label>Quick reply chance</label>
+                        <input type="number" id="autolife_quick" min="0" max="1" step="0.05" value="0.5">
+                        <label>Delay minutes (min–max)</label>
+                        <span><input type="number" id="autolife_dmin" min="0" max="1440" value="5" style="width:45%"> – <input type="number" id="autolife_dmax" min="0" max="1440" value="90" style="width:45%"></span>
+                        <label>Busy delay multiplier</label>
+                        <input type="number" id="autolife_busyx" min="0.1" max="100" step="0.1" value="3">
+                        <label>Ignore chance</label>
+                        <input type="number" id="autolife_ignore" min="0" max="1" step="0.01" value="0.05">
+                        <label>Message length</label>
+                        <select id="autolife_len"><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select>
+                        <label>Catch-up after missed message</label>
+                        <input type="checkbox" id="autolife_catchup" checked>
+                    </div>
+
+                    <div style="margin-top:8px;">
+                        <b style="font-size:0.85em;">Weekly schedule</b>
+                        <span class="autolife-muted"> (first match wins; unlisted times = free)</span>
+                        <div class="autolife-sched-row autolife-sched-head" id="autolife_sched_head"></div>
+                        <div id="autolife_sched_rows"></div>
+                        <button class="menu_button autolife-btn" id="autolife_add_block">+ add block</button>
+                    </div>
+
+                    <div class="autolife-form-grid" style="margin-top:10px;">
+                        <label>Initiative (texts you first)</label>
+                        <input type="checkbox" id="autolife_init_on">
+                        <label>Initiative min gap (min)</label>
+                        <input type="number" id="autolife_init_gap" min="1" max="10080" value="120">
+                        <label>Initiative max / day</label>
+                        <input type="number" id="autolife_init_max" min="0" max="100" value="4">
+                        <label>Double-text after (h, 0=off)</label>
+                        <input type="number" id="autolife_followup" min="0" max="168" value="6">
+                        <label>Relationship start (0–100)</label>
+                        <input type="number" id="autolife_rel" min="0" max="100" value="20">
+                        <label>Keep a private journal</label>
+                        <input type="checkbox" id="autolife_journal" checked>
+                        <label>Long-term memory (RAG)</label>
+                        <input type="checkbox" id="autolife_mem_on" checked>
+                        <label>Recalled texts per reply (0–10)</label>
+                        <input type="number" id="autolife_mem_k" min="0" max="10" value="3">
+                        <label>Memory index size (max entries)</label>
+                        <input type="number" id="autolife_mem_max" min="100" max="100000" step="100" value="4000">
+                    </div>
+
+                    <div style="margin-top:10px;">
+                        <button class="menu_button autolife-btn" id="autolife_save"><i class="fa-solid fa-floppy-disk"></i> Save card</button>
+                        <button class="menu_button autolife-btn" id="autolife_force"><i class="fa-solid fa-bolt"></i> Force message now</button>
+                        <span id="autolife_save_msg" class="autolife-muted"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+
 // ---------------------------------------------------------------- schedule editor
 
 function schedHeadHtml() {
@@ -231,7 +250,7 @@ function readSchedRows() {
     }).filter((b) => b.days.length > 0);
 }
 
-// ---------------------------------------------------------------- panel logic
+// ---------------------------------------------------------------- dashboard: status/monitor/audit/memory/model
 
 async function refreshStatus() {
     try {
@@ -243,8 +262,12 @@ async function refreshStatus() {
             `Engine ${s.engine.running ? 'running' : 'stopped'} · tick ${s.engine.tickSeconds}s · model ${model} · Ollama ${s.ollama?.version ?? 'unreachable'}`,
         );
         state.enabled = new Set(s.engine.characters.filter((c) => c.enabled && !c.paused).map((c) => c.name));
+        state.charStatus = new Map(s.engine.characters.map((c) => [c.name, c]));
         renderMonitor(s.engine.characters);
         populateAuditFilter(s.engine.characters);
+        updateChatStrip();
+        applyCharacterChips();
+        updateTypingBubble();
     } catch (err) {
         $('#autolife_badge').text('plugin unreachable');
         $('#autolife_status').text(`Could not reach the Autolife plugin — is it enabled in config.yaml? (${err.message})`);
@@ -254,7 +277,7 @@ async function refreshStatus() {
 function renderMonitor(characters) {
     const $t = $('#autolife_monitor');
     if (!characters.length) {
-        $t.html('<tr><td class="autolife-muted">No Autolife characters yet — open a character and configure it above.</td></tr>');
+        $t.html('<tr><td class="autolife-muted">No Autolife characters yet — open a character and configure it in the editor.</td></tr>');
         return;
     }
     const mins = (iso) => Math.max(0, Math.round((new Date(iso).getTime() - Date.now()) / 60000));
@@ -318,11 +341,36 @@ function populateAuditFilter(characters) {
     $('#autolife_audit_filter').html(options.map((o) => `<option value="${o}" ${o === current ? 'selected' : ''}>${o === 'all' ? 'all' : o}</option>`).join(''));
 }
 
+// ---------------------------------------------------------------- memory section
+
+async function loadMemorySection() {
+    try {
+        const m = await api('/memory');
+        $('#autolife_embed_model').val(m.embedModel);
+        const rows = m.characters.map((c) => {
+            const pct = c.chatMessages ? Math.min(100, Math.round((c.entries / c.chatMessages) * 100)) : 0;
+            return `<tr>
+                <td><b>${c.name}</b>${c.enabled ? '' : ' <span class="autolife-muted">(off)</span>'}</td>
+                <td>${c.entries} indexed</td>
+                <td>${c.chatMessages} in chat${pct > 0 && pct < 100 ? ` · backfilling ${pct}%` : ''}</td>
+                <td>${c.model ?? '—'}</td>
+                <td><a class="autolife-btn" data-memrebuild="${c.name}" title="rebuild index from chat history"><i class="fa-solid fa-rotate-left"></i></a></td>
+            </tr>`;
+        });
+        $('#autolife_memory_table').html(rows.length
+            ? '<tr><th>character</th><th>memory</th><th>source</th><th>embed model</th><th></th></tr>' + rows.join('')
+            : '<tr><td class="autolife-muted">No Autolife characters.</td></tr>');
+    } catch { /* plugin offline */ }
+}
+
+// ---------------------------------------------------------------- character editor (P2)
+
 async function loadCharacterEditor() {
     const name = currentCharacterName();
     $('#autolife_char_name').text(name ?? '—');
     if (!name) {
         $('#autolife_editor').hide();
+        $('#autolife_enable').prop('checked', false);
         return;
     }
     try {
@@ -399,86 +447,177 @@ async function saveCard() {
     setTimeout(() => msg.text(''), 4000);
 }
 
-async function loadTelegramSection() {
-    try {
-        const { settings } = await api('/settings');
-        $('#autolife_tg_token').attr('placeholder', settings.telegram?.hasToken ? settings.telegram.token : '123456:ABC… (from @BotFather)');
-        $('#autolife_tg_ids').val((settings.telegram?.allowed_chat_ids ?? []).join(', '));
-        const { bindings } = await api('/bindings');
-        const rows = Object.entries(bindings).map(([chatId, b]) =>
-            `<tr><td>${chatId}</td><td>${b?.character ?? '?'}</td><td><a class="autolife-btn" data-unbind="${chatId}" title="unbind"><i class="fa-solid fa-link-slash"></i></a></td></tr>`);
-        $('#autolife_bindings').html(rows.length ? `Bindings: <table>${rows.join('')}</table>` : 'No Telegram chats bound yet.');
-    } catch { /* plugin offline; status line already shows it */ }
+// ---------------------------------------------------------------- chat-native layer (P1)
+
+function chatStripHtml() {
+    return `
+    <div id="autolife_chat_strip" class="autolife-chat-strip" style="display:none;">
+        <span class="autolife-strip-name"></span>
+        <span class="autolife-strip-activity"></span>
+        <span class="autolife-avail-bar autolife-strip-bar"><div></div></span>
+        <span class="autolife-strip-time autolife-muted"></span>
+        <span class="autolife-strip-init autolife-muted"></span>
+    </div>`;
 }
 
-async function loadModelSection() {
-    try {
-        const m = await api('/model/list');
-        const installed = new Set(m.local.map((l) => l.name));
-        state.installedModels = installed;
-        const options = [
-            ...m.presets.map((p) => ({
-                value: p,
-                label: `${p}${p === m.current ? ' · in use' : installed.has(p) ? ' · installed' : ' · NOT downloaded'}`,
-            })),
-            ...m.local.filter((l) => !m.presets.includes(l.name)).map((l) => ({
-                value: l.name,
-                label: `${l.name}${l.name === m.current ? ' · in use' : ''}`,
-            })),
-        ];
-        $('#autolife_model_select').html(options.map((o) => `<option value="${o.value}" ${o.value === m.current ? 'selected' : ''}>${o.label}</option>`).join(''));
-        $('#autolife_think').val(m.think ?? 'off');
-        refreshModelButtons();
-    } catch { /* ignore */ }
+function updateChatStrip() {
+    const $strip = $('#autolife_chat_strip');
+    if (!$strip.length) return;
+    const name = currentCharacterName();
+    const status = name ? state.charStatus.get(name) : null;
+    if (!status || !state.enabled.has(name)) {
+        $strip.hide();
+        return;
+    }
+    $strip.show();
+    $strip.find('.autolife-strip-name').text(`${name} · ${status.paused ? 'paused' : 'alive'}`);
+    $strip.find('.autolife-strip-activity').text(status.activity + (status.mood ? ` (${status.mood})` : ''));
+    $strip.find('.autolife-strip-bar > div').css('width', `${Math.round(status.availability * 100)}%`);
+    $strip.find('.autolife-strip-time').text(status.localTime);
+    const init = status.initiative ?? {};
+    $strip.find('.autolife-strip-init').text(!init.enabled ? 'initiative off' : (init.blockedReason ? `next text: ${init.blockedReason}` : 'may text you any moment'));
 }
 
-/** Pull button reflects the chosen model's install state. */
-function refreshModelButtons() {
-    const chosen = $('#autolife_model_free').val().trim() || $('#autolife_model_select').val();
-    const $pull = $('#autolife_model_pull');
-    if (chosen && state.installedModels?.has(chosen)) {
-        $pull.prop('disabled', true).text('Ready ✓');
-    } else {
-        $pull.prop('disabled', false).text('Pull');
+function ensureTypingBubble() {
+    let $b = $('#autolife_typing_bubble');
+    if (!$b.length) {
+        $b = $(`<div id="autolife_typing_bubble" class="mes autolife-typing-bubble" style="display:none;">
+            <div class="mes_block"><div class="ch_name autolife-typing-name"></div>
+            <div class="mes_text autolife-typing-text"><span class="autolife-dots"><i></i><i></i><i></i></span> <span class="autolife-typing-status"></span></div></div>
+        </div>`);
+        $('#chat').append($b);
+    }
+    return $b;
+}
+
+function updateTypingBubble() {
+    const $b = ensureTypingBubble();
+    const name = currentCharacterName();
+    const status = name ? state.charStatus.get(name) : null;
+    const open = name && state.enabled.has(name);
+    if (!open || !status || status.paused) return $b.hide();
+
+    if (status.pendingReply) {
+        const due = new Date(status.pendingReply.dueAt);
+        const mins = Math.max(0, Math.round((due.getTime() - Date.now()) / 60000));
+        const label = mins > 0 ? `typing… (or busy — reply around ${due.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${mins > 90 ? `, ~${Math.round(mins / 60)}h` : `, ~${mins}m`})` : 'typing…';
+        $b.find('.autolife-typing-name').text(name);
+        $b.find('.autolife-typing-status').text(label);
+        return $b.show();
+    }
+    $b.hide();
+}
+
+function removeTypingBubble() {
+    $('#autolife_typing_bubble').hide();
+}
+
+/**
+ * Insert an engine-generated message into the OPEN chat live (no reload).
+ * Falls back to a reload if the context API shape surprises us.
+ */
+async function insertLiveMessage(data) {
+    const name = currentCharacterName();
+    if (name !== data.character) {
+        toast(`<b>${data.character}</b> texted you.`);
+        return;
+    }
+    const generating = $('#mes_stop').is(':visible');
+    if (generating) {
+        toast(`<b>${data.character}</b> texted you — reload the chat when your generation finishes.`);
+        return;
+    }
+    try {
+        const chatId = (typeof ST.getCurrentChatId === 'function' ? ST.getCurrentChatId() : ST.chatId) ?? null;
+        if (chatId && data.chatFile && !String(data.chatFile).replace(/\.jsonl$/, '').endsWith(String(chatId))) {
+            toast(`<b>${data.character}</b> texted you in another chat.`);
+            return;
+        }
+        const message = {
+            name: data.character,
+            is_user: false,
+            is_system: false,
+            send_date: new Date().toISOString(),
+            mes: String(data.mes ?? ''),
+            extra: { autolife_kind: data.kind ?? 'reply' },
+            swipes: [String(data.mes ?? '')],
+        };
+        ST.chat.push(message);
+        ST.addOneMessage(message, { type: 'normal', scroll: true });
+        ST.saveChat();
+    } catch (err) {
+        // never lose the message — fall back to a reload
+        try { ST.reloadCurrentChat(); } catch { toast(`<b>${data.character}</b> texted you.`); }
     }
 }
 
-// ---------------------------------------------------------------- memory section
+/** Tag engine messages (⚡ initiative etc.) once rendered. */
+const KIND_TAG = { initiative: '⚡', catchup: '↩', followup: '➤', reply: '' };
 
-async function loadMemorySection() {
+function annotateMessage(index) {
     try {
-        const m = await api('/memory');
-        $('#autolife_embed_model').val(m.embedModel);
-        const rows = m.characters.map((c) => {
-            const pct = c.chatMessages ? Math.min(100, Math.round((c.entries / c.chatMessages) * 100)) : 0;
-            return `<tr>
-                <td><b>${c.name}</b>${c.enabled ? '' : ' <span class="autolife-muted">(off)</span>'}</td>
-                <td>${c.entries} indexed</td>
-                <td>${c.chatMessages} in chat${pct > 0 && pct < 100 ? ` · backfilling ${pct}%` : ''}</td>
-                <td>${c.model ?? '—'}</td>
-                <td><a class="autolife-btn" data-memrebuild="${c.name}" title="rebuild index from chat history"><i class="fa-solid fa-rotate-left"></i></a></td>
-            </tr>`;
+        const m = ST.chat?.[index];
+        const kind = m?.extra?.autolife_kind;
+        if (!kind || !KIND_TAG[kind]) return;
+        $(`.mes[mesid="${index}"] .mes_text`).each((_, el) => {
+            const $el = $(el);
+            if (!$el.find('.autolife-msg-tag').length) {
+                $el.prepend(`<span class="autolife-msg-tag" title="engine ${kind}">⚡</span>`);
+            }
         });
-        $('#autolife_memory_table').html(rows.length
-            ? '<tr><th>character</th><th>memory</th><th>source</th><th>embed model</th><th></th></tr>' + rows.join('')
-            : '<tr><td class="autolife-muted">No Autolife characters.</td></tr>');
-    } catch { /* plugin offline */ }
+    } catch { /* rendering shapes vary across ST versions */ }
 }
 
-// ---------------------------------------------------------------- toasts / typing
+function annotateVisibleMessages() {
+    (ST.chat ?? []).forEach((m, i) => {
+        if (m?.extra?.autolife_kind) annotateMessage(i);
+    });
+}
+
+// ---------------------------------------------------------------- character tile chips (P2)
+
+const chipFor = (status) => {
+    if (!status) return null;
+    if (status.paused) return { icon: '⏸', label: 'paused', cls: 'paused' };
+    if (status.availability < 0.05) return { icon: '💤', label: status.activity, cls: 'asleep' };
+    if (status.availability < 0.35) return { icon: '🏢', label: status.activity, cls: 'busy' };
+    return { icon: '✨', label: 'free', cls: 'free' };
+};
+
+function applyCharacterChips() {
+    if (!ST?.characters) return;
+    $('#rm_print_characters_block .character_select').each((_, el) => {
+        const $el = $(el);
+        const chid = Number($el.attr('chid'));
+        const character = ST.characters[chid];
+        if (!character?.name) return;
+        $el.find('.autolife-chip').remove();
+        const status = state.charStatus.get(character.name);
+        if (!status) return; // not an autolife character
+        const chip = chipFor(status);
+        const $name = $el.find('.ch_name');
+        if ($name.length && chip) {
+            $name.append(` <span class="autolife-chip autolife-chip-${chip.cls}" title="${status.activity} · ${status.localTime}">${chip.icon}</span>`);
+        }
+    });
+}
+
+function watchCharacterList() {
+    const target = document.getElementById('rm_print_characters_block');
+    if (!target) return;
+    let timer = null;
+    const reapply = () => {
+        clearTimeout(timer);
+        timer = setTimeout(applyCharacterChips, 200);
+    };
+    new MutationObserver(reapply).observe(target, { childList: true, subtree: true });
+}
+
+// ---------------------------------------------------------------- toasts
 
 function toast(text, ms = 3500) {
     const $t = $(`<div class="autolife-toast">${text}</div>`).appendTo('body');
     setTimeout(() => $t.fadeOut(300, () => $t.remove()), ms);
-}
-
-function showTyping(character) {
-    const $last = $('#chat .mes.last_mes');
-    if ($last.length && !$last.find('.autolife-typing').length) {
-        $last.find('.mes_block').append(`<div class="autolife-typing">${character} is typing… (or busy, or asleep — they'll get back to you)</div>`);
-    }
-    clearTimeout(state.typingTimers.get(character));
-    state.typingTimers.set(character, setTimeout(() => $('.autolife-typing').remove(), 10 * 60 * 1000));
 }
 
 // ---------------------------------------------------------------- pull progress widget
@@ -533,6 +672,52 @@ function updatePullWidget(d) {
     }
 }
 
+// ---------------------------------------------------------------- telegram / model sections
+
+async function loadTelegramSection() {
+    try {
+        const { settings } = await api('/settings');
+        $('#autolife_tg_token').attr('placeholder', settings.telegram?.hasToken ? settings.telegram.token : '123456:ABC… (from @BotFather)');
+        $('#autolife_tg_ids').val((settings.telegram?.allowed_chat_ids ?? []).join(', '));
+        const { bindings } = await api('/bindings');
+        const rows = Object.entries(bindings).map(([chatId, b]) =>
+            `<tr><td>${chatId}</td><td>${b?.character ?? '?'}</td><td><a class="autolife-btn" data-unbind="${chatId}" title="unbind"><i class="fa-solid fa-link-slash"></i></a></td></tr>`);
+        $('#autolife_bindings').html(rows.length ? `Bindings: <table>${rows.join('')}</table>` : 'No Telegram chats bound yet.');
+    } catch { /* plugin offline; status line already shows it */ }
+}
+
+async function loadModelSection() {
+    try {
+        const m = await api('/model/list');
+        const installed = new Set(m.local.map((l) => l.name));
+        state.installedModels = installed;
+        const options = [
+            ...m.presets.map((p) => ({
+                value: p,
+                label: `${p}${p === m.current ? ' · in use' : installed.has(p) ? ' · installed' : ' · NOT downloaded'}`,
+            })),
+            ...m.local.filter((l) => !m.presets.includes(l.name)).map((l) => ({
+                value: l.name,
+                label: `${l.name}${l.name === m.current ? ' · in use' : ''}`,
+            })),
+        ];
+        $('#autolife_model_select').html(options.map((o) => `<option value="${o.value}" ${o.value === m.current ? 'selected' : ''}>${o.label}</option>`).join(''));
+        $('#autolife_think').val(m.think ?? 'off');
+        refreshModelButtons();
+    } catch { /* ignore */ }
+}
+
+/** Pull button reflects the chosen model's install state. */
+function refreshModelButtons() {
+    const chosen = $('#autolife_model_free').val().trim() || $('#autolife_model_select').val();
+    const $pull = $('#autolife_model_pull');
+    if (chosen && state.installedModels?.has(chosen)) {
+        $pull.prop('disabled', true).text('Ready ✓');
+    } else {
+        $pull.prop('disabled', false).text('Pull');
+    }
+}
+
 // ---------------------------------------------------------------- SSE
 
 function connectEvents() {
@@ -547,30 +732,19 @@ function connectEvents() {
         switch (data.type) {
             case 'audit': {
                 const $feed = $('#autolife_audit_feed');
-                if ($feed.find('.autolife-muted-only').length || $feed.children().length === 0) $feed.empty();
+                if ($feed.children().length === 0 || $feed.find('.autolife-muted').length === $feed.children().length) $feed.empty();
                 $feed.prepend(auditRow(data));
                 $feed.children().slice(120).remove();
                 applyAuditFilter();
                 break;
             }
             case 'character_message': {
-                $('.autolife-typing').remove();
+                removeTypingBubble();
                 refreshStatus();
-                const open = currentCharacterName();
-                if (open === data.character) {
-                    const generating = $('#mes_stop').is(':visible');
-                    if (!generating && !$('#send_textarea').is(':focus')) {
-                        ST.reloadCurrentChat();
-                    } else {
-                        toast(`<b>${data.character}</b> texted you — reload the chat when ready.`);
-                    }
-                } else {
-                    toast(`<b>${data.character}</b> texted you.`);
-                }
+                insertLiveMessage(data);
                 break;
             }
             case 'deferred':
-                showTyping(data.character);
                 refreshStatus();
                 break;
             case 'ignored':
@@ -581,15 +755,15 @@ function connectEvents() {
                 if (data.type === 'bindings_changed') loadTelegramSection();
                 if (data.type === 'card_updated' && currentCharacterName() === data.character) loadCharacterEditor();
                 break;
+            case 'memory':
+                loadMemorySection();
+                break;
             case 'model_pull':
                 updatePullWidget(data);
                 if (data.status === 'success' || /^failed/.test(data.status ?? '')) {
                     loadModelSection();
                     refreshStatus();
                 }
-                break;
-            case 'memory':
-                loadMemorySection();
                 break;
             case 'model_changed':
                 loadModelSection();
@@ -604,6 +778,7 @@ function connectEvents() {
 // ---------------------------------------------------------------- wiring
 
 function wireEvents() {
+    // --- editor ---
     $('#autolife_add_block').on('click', () => $('#autolife_sched_rows').append(schedRowHtml()));
     $(document).on('click', '.autolife-del-block', (ev) => $(ev.currentTarget).closest('.autolife-sched-row').remove());
 
@@ -611,7 +786,7 @@ function wireEvents() {
         const on = ev.target.checked;
         $('#autolife_editor').toggle(on);
         if (!on) {
-            const name = ST.name2;
+            const name = currentCharacterName();
             api('/enable', 'POST', { name, enabled: false }).then(refreshStatus).catch((e) => toast(`disable failed: ${e.message}`));
         }
     });
@@ -629,6 +804,7 @@ function wireEvents() {
         }
     });
 
+    // --- monitor buttons ---
     $(document).on('click', '[data-force]', async (ev) => {
         const name = $(ev.currentTarget).data('force');
         toast(`Asking ${name} to text you now…`);
@@ -646,9 +822,11 @@ function wireEvents() {
             .then(loadTelegramSection).catch((e) => toast(e.message));
     });
 
+    // --- audit ---
     $('#autolife_audit_filter').on('change', applyAuditFilter);
     $('#autolife_audit_refresh').on('click', loadAudit);
 
+    // --- memory ---
     $('#autolife_embed_save').on('click', async () => {
         const model = $('#autolife_embed_model').val().trim();
         const msg = $('#autolife_embed_msg').text('saving…');
@@ -665,6 +843,7 @@ function wireEvents() {
         api('/memory/rebuild', 'POST', { name }).then(loadMemorySection).catch((e) => toast(e.message));
     });
 
+    // --- telegram ---
     $('#autolife_tg_save').on('click', async () => {
         const token = $('#autolife_tg_token').val().trim();
         const ids = $('#autolife_tg_ids').val().split(/[,\s]+/).map((s) => Number(s.trim())).filter(Number.isFinite);
@@ -681,14 +860,7 @@ function wireEvents() {
         setTimeout(() => msg.text(''), 4000);
     });
 
-    $('#autolife_think').on('change', async (ev) => {
-        const think = ev.target.value;
-        try {
-            await api('/settings', 'POST', { model: { think } });
-            toast(`Thinking set to ${think}`);
-        } catch (e) { toast(e.message); }
-    });
-
+    // --- model ---
     const chosenModel = () => $('#autolife_model_free').val().trim() || $('#autolife_model_select').val();
     $('#autolife_model_select').on('change', refreshModelButtons);
     $('#autolife_model_free').on('input', refreshModelButtons);
@@ -706,6 +878,13 @@ function wireEvents() {
             updatePullWidget({ model, status: 'starting' });
         } catch (e) { toast(e.message); }
     });
+    $('#autolife_think').on('change', async (ev) => {
+        const think = ev.target.value;
+        try {
+            await api('/settings', 'POST', { model: { think } });
+            toast(`Thinking set to ${think}`);
+        } catch (e) { toast(e.message); }
+    });
 }
 
 // user messages from the web UI -> engine (decides delay/ignore/…)
@@ -715,8 +894,8 @@ function onUserMessage() {
     const chat = ST.chat ?? [];
     const last = chat[chat.length - 1];
     if (!last?.is_user) return;
-    showTyping(name);
-    api('/inbound', 'POST', { character: name, mes: String(last.mes ?? '') }).catch(() => {});
+    updateTypingBubble();
+    api('/inbound', 'POST', { character: name, mes: String(last.mes ?? '') }).then(() => refreshStatus()).catch(() => {});
 }
 
 // ---------------------------------------------------------------- bootstrap
@@ -726,8 +905,22 @@ jQuery(() => {
         ST = (window.SillyTavern?.getContext) ? window.SillyTavern.getContext() : null;
         if (!ST) return setTimeout(init, 500);
 
+        // dashboard panel in the extensions drawer
         $('#extensions_settings2').append(panelHtml());
         $('#autolife_sched_head').html(schedHeadHtml());
+
+        // character config inside ST's character editor (falls back to the drawer)
+        const $editor = $('#character_editing');
+        if ($editor.length) {
+            $editor.append(editorHtml());
+        } else {
+            // no editor panel found (unexpected ST layout) — keep it reachable
+            $('#extensions_settings2').find('.autolife-panel').prepend(editorHtml());
+        }
+
+        // chat strip above the chat
+        $('#chat').before(chatStripHtml());
+
         wireEvents();
 
         ST.eventSource.on(ST.event_types.APP_READY, () => {
@@ -737,15 +930,23 @@ jQuery(() => {
             loadModelSection();
             loadAudit();
             loadMemorySection();
+            loadCharacterEditor();
+            watchCharacterList();
             setInterval(refreshStatus, 30_000);
             setInterval(loadAudit, 120_000);
+            setInterval(() => { updateChatStrip(); updateTypingBubble(); }, 15_000);
         });
         ST.eventSource.on(ST.event_types.CHAT_CHANGED, () => {
             loadCharacterEditor();
             refreshStatus();
+            removeTypingBubble();
+            annotateVisibleMessages();
         });
         ST.eventSource.on(ST.event_types.MESSAGE_SENT, onUserMessage);
-        ST.eventSource.on(ST.event_types.MESSAGE_RECEIVED, () => $('.autolife-typing').remove());
+        ST.eventSource.on(ST.event_types.MESSAGE_RECEIVED, () => removeTypingBubble());
+        ST.eventSource.on(ST.event_types.CHARACTER_MESSAGE_RENDERED, (idx) => {
+            try { annotateMessage(typeof idx === 'number' ? idx : Number(idx?.messageId ?? idx)); } catch { /* noop */ }
+        });
 
         loadCharacterEditor();
     };

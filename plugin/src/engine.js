@@ -521,7 +521,7 @@ export class Engine {
         }
         if (text.length > 1500) text = text.slice(0, 1500).trim();
 
-        const charMsg = this.chatStore.characterMessage(entry.name, text, now);
+        const charMsg = this.chatStore.characterMessage(entry.name, text, now, { autolife_kind: kind });
         this.chatStore.appendMessage(entry.name, state.chatFile, charMsg);
         this.#remember(entry, state.chatFile, 'assistant', text, charMsg.send_date);
         state.lastCharMessageAt = now.toISOString();
