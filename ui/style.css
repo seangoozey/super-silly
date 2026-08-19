@@ -220,6 +220,17 @@
 
 .autolife-chip {
     cursor: pointer;
+    padding: 0 3px; /* bigger, friendlier hit area */
+}
+
+.autolife-reload-banner {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 99999;
+    max-width: 520px;
+    font-size: 0.95em;
 }
 
 /* ---- dedicated per-character panel ---- */

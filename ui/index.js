@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.2';
+const EXT_VERSION = '0.4.3';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -22,17 +22,34 @@ const state = {
 // ---------------------------------------------------------------- plugin API
 
 async function api(path, method = 'GET', body = null) {
-    const res = await fetch(PLUGIN + path, {
-        method,
-        headers: {
-            ...(await ST.getRequestHeaders()),
-            'Content-Type': 'application/json',
-        },
-        body: body ? JSON.stringify(body) : undefined,
-    });
+    let res;
+    try {
+        res = await fetch(PLUGIN + path, {
+            method,
+            headers: {
+                ...(await ST.getRequestHeaders()),
+                'Content-Type': 'application/json',
+            },
+            body: body ? JSON.stringify(body) : undefined,
+        });
+    } catch (err) {
+        showReloadBanner();
+        throw new Error(`server unreachable — was the container rebuilt? Reload the page. (${err.message})`);
+    }
+    if (res.status === 403) {
+        // CSRF/session invalidated server-side: the classic case is the page
+        // surviving a container rebuild. Nothing will work until reload.
+        showReloadBanner();
+        throw new Error('session expired — the server was restarted (rebuilt?). Reload the page (Ctrl-Shift-R).');
+    }
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
     return json;
+}
+
+function showReloadBanner() {
+    if ($('#autolife_reload_banner').length) return;
+    $('<div id="autolife_reload_banner" class="autolife-toast autolife-reload-banner">⚠️ Autolife: the server was restarted (container rebuilt?) and this page\'s session is stale. <b>Reload the page (Ctrl-Shift-R)</b> — ST saves will keep failing until you do.</div>').appendTo('body');
 }
 
 function currentCharacterName() {
@@ -984,12 +1001,17 @@ function wireEvents() {
     $('#autolife_panel_journal_refresh').on('click', refreshPanel);
 
     // --- chips open the dedicated panel without selecting the character ---
-    $(document).on('click', '.autolife-chip', (ev) => {
+    // CAPTURE phase: runs before ST's tile handlers, so the click never
+    // selects the character and never re-renders (which used to destroy the
+    // chip mid-click — hence single clicks not working).
+    document.addEventListener('click', (ev) => {
+        const chip = ev.target?.closest?.('.autolife-chip');
+        if (!chip) return;
         ev.stopPropagation();
         ev.preventDefault();
-        const name = $(ev.currentTarget).data('name');
+        const name = chip.getAttribute('data-name');
         if (name) openCharacterPanel(name);
-    });
+    }, true);
 
     // monitor table names open the panel too
     $(document).on('click', '.autolife-panel-launch', (ev) => {
