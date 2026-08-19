@@ -20,8 +20,9 @@ function usage(code = 0) {
 
 Commands:
   create --name <name> --template <t> [--tz <tz>] [--out <file.json>]
-  embed <card.json> [--avatar <img.png>] [-o <out.png>]
-                                (embed always replaces any existing card chunks)
+  embed <card.json> [image.png] [-o <out.png>]
+                                (pack the card into an existing image, IN PLACE
+                                 unless -o given; placeholder avatar if no image)
   purge <image.png> [-o <out.png>]
                                 (strips ALL card data; in place unless -o given)
   validate <file...>        (.png or .json cards)
@@ -73,16 +74,23 @@ switch (command) {
         const cardFile = process.argv[3];
         if (!cardFile) usage(1);
         const card = JSON.parse(fs.readFileSync(cardFile, 'utf8'));
-        const avatar = arg('--avatar');
-        const out = arg('-o') ?? arg('--out');
+        // positional image (embed <card.json> <image.png>) or the --avatar flag
+        const flagValuePositions = new Set();
+        for (let i = 0; i < process.argv.length; i++) {
+            if (['--avatar', '-o', '--out'].includes(process.argv[i])) flagValuePositions.add(i + 1);
+        }
+        const positional = process.argv.slice(4).filter((a, i) => !a.startsWith('-') && !flagValuePositions.has(4 + i));
+        const imageFile = positional[0] ?? arg('--avatar');
+        // embedding into an existing image defaults to in place
+        const out = arg('-o') ?? arg('--out') ?? imageFile;
         if (!out) {
-            console.error('Need -o <out.png>');
+            console.error('Need an existing image to embed into (in place), or -o <out.png> for a placeholder avatar.');
             process.exit(1);
         }
         const name = card?.data?.name ?? 'character';
-        const base = avatar ? fs.readFileSync(avatar) : generatePlaceholderAvatar(name);
+        const base = imageFile ? fs.readFileSync(imageFile) : generatePlaceholderAvatar(name);
         const png = embedCardInPng(base, card);
-        fs.mkdirSync(path.dirname(out), { recursive: true });
+        fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
         fs.writeFileSync(out, png);
         // round-trip check
         const back = extractCardFromPng(png).card;
@@ -90,7 +98,8 @@ switch (command) {
             console.error('Round-trip verification FAILED');
             process.exit(1);
         }
-        console.log(`Wrote ${out} (${(png.length / 1024).toFixed(0)} KB, card: ${name}${avatar ? '' : ', placeholder avatar'})`);
+        const inPlace = out === imageFile;
+        console.log(`Wrote ${out} (${(png.length / 1024).toFixed(0)} KB, card: ${name}${imageFile ? inPlace ? ', embedded in place' : ', from ' + imageFile : ', placeholder avatar'})`);
         break;
     }
 

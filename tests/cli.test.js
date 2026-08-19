@@ -59,6 +59,29 @@ test('cli: create + validate + embed + inspect roundtrip', () => {
     assert.match(vout2, /✓/);
 });
 
+test('cli: embed packs a card into an existing image (positional, in place)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cardtools-embed-'));
+    const json = path.join(tmp, 'cli-test.json');
+    const img = path.join(tmp, 'CliTest.png');
+    execFileSync('node', [CLI, 'create', '--name', 'Cli Test', '--template', 'busy-friend', '--out', json]);
+    execFileSync('node', [CLI, 'embed', json, '-o', img]);
+
+    // positional form embeds IN PLACE into the existing image
+    const before = fs.statSync(img).size;
+    const out = execFileSync('node', [CLI, 'embed', json, img], { encoding: 'utf8' });
+    assert.match(out, /embedded in place/);
+    const card = extractCardFromPng(fs.readFileSync(img)).card;
+    assert.equal(card.data.name, 'Cli Test');
+
+    // purge then re-embed via positional image + -o redirect
+    execFileSync('node', [CLI, 'purge', img, '-o', img]);
+    assert.throws(() => extractCardFromPng(fs.readFileSync(img)), /No character card/);
+    const img2 = path.join(tmp, 'Re.png');
+    execFileSync('node', [CLI, 'embed', json, img, '-o', img2]);
+    assert.equal(extractCardFromPng(fs.readFileSync(img2)).card.data.name, 'Cli Test');
+    assert.ok(before > 0);
+});
+
 test('cli: validate fails on a broken card', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cardtools-bad-'));
     const bad = path.join(tmp, 'bad.json');
