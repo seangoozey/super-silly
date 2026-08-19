@@ -8,6 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
+const EXT_VERSION = '0.3.2';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -259,7 +260,7 @@ async function refreshStatus() {
         const model = s.model?.current ?? '?';
         $('#autolife_badge').text(`running · ${tg}`);
         $('#autolife_status').text(
-            `Engine ${s.engine.running ? 'running' : 'stopped'} · tick ${s.engine.tickSeconds}s · model ${model} · Ollama ${s.ollama?.version ?? 'unreachable'}`,
+            `Autolife ${EXT_VERSION} · engine ${s.engine.running ? 'running' : 'stopped'} · tick ${s.engine.tickSeconds}s · model ${model} · Ollama ${s.ollama?.version ?? 'unreachable'}`,
         );
         state.enabled = new Set(s.engine.characters.filter((c) => c.enabled && !c.paused).map((c) => c.name));
         state.charStatus = new Map(s.engine.characters.map((c) => [c.name, c]));
@@ -270,7 +271,7 @@ async function refreshStatus() {
         updateTypingBubble();
     } catch (err) {
         $('#autolife_badge').text('plugin unreachable');
-        $('#autolife_status').text(`Could not reach the Autolife plugin — is it enabled in config.yaml? (${err.message})`);
+        $('#autolife_status').text(`Autolife ${EXT_VERSION} — could not reach the plugin (${err.message}). Is it enabled in config.yaml?`);
     }
 }
 
@@ -367,6 +368,7 @@ async function loadMemorySection() {
 
 async function loadCharacterEditor() {
     const name = currentCharacterName();
+    lastEditorLoad = { name, ts: Date.now() };
     $('#autolife_char_name').text(name ?? '—');
     if (!name) {
         $('#autolife_editor').hide();
@@ -901,34 +903,40 @@ function onUserMessage() {
 // ---------------------------------------------------------------- bootstrap
 
 /**
- * Inject the per-character config into ST's character editor.
- * ST 1.18: the editor form is #form_create (inside #rm_ch_create_block);
- * older builds used #character_editing. The form exists statically, but be
- * defensive: retry briefly, then fall back to the drawer panel so config is
- * never unreachable.
+ * The per-character config lives in ONE instance that moves between surfaces:
+ * inside the "Advanced Definitions" popup (#character_popup) when it's open —
+ * that's where people look for character settings — and at the bottom of the
+ * main editor form (#form_create) otherwise. A watchdog re-creates the
+ * section if SillyTavern rebuilds the editor HTML and wipes it, and reloads
+ * values when the popup opens for a character.
  */
-function injectEditorSection() {
-    if ($('.autolife-editor-section').length) return true;
-    const $target = $('#form_create').length
-        ? $('#form_create')
-        : ($('#character_editing').length ? $('#character_editing') : null);
-    if ($target) {
-        $target.append(editorHtml());
-        return true;
-    }
-    return false;
+let lastEditorLoad = { name: null, ts: 0 };
+
+function editorSectionHome() {
+    const $popup = $('#character_popup');
+    if ($popup.length && $popup.is(':visible')) return $popup;
+    if ($('#form_create').length) return $('#form_create');
+    if ($('#character_editing').length) return $('#character_editing'); // older ST
+    return null;
 }
 
-function scheduleEditorInjection() {
-    if (injectEditorSection()) return;
-    let tries = 0;
-    const timer = setInterval(() => {
-        tries += 1;
-        if (injectEditorSection() || tries > 30) {
-            clearInterval(timer);
-            if (tries > 30) {
-                // editor form never appeared — keep the config reachable in the drawer
-                $('#extensions_settings2').find('.autolife-panel').prepend(editorHtml());
+function startEditorWatchdog() {
+    let wasPopupOpen = false;
+    setInterval(() => {
+        const $home = editorSectionHome();
+        if (!$home) return;
+        let $sec = $('.autolife-editor-section');
+        if (!$sec.length) {
+            $home.append(editorHtml()); // wiped by an ST re-render — recreate
+        } else if (!$sec.parent().is($home)) {
+            $home.append($sec); // moves the single instance to the open surface
+        }
+        const popupOpen = $home.is('#character_popup');
+        if (popupOpen !== wasPopupOpen) {
+            wasPopupOpen = popupOpen;
+            const name = currentCharacterName();
+            if (name && (lastEditorLoad.name !== name || Date.now() - lastEditorLoad.ts > 30_000)) {
+                loadCharacterEditor();
             }
         }
     }, 1000);
@@ -950,8 +958,8 @@ jQuery(() => {
         $('#extensions_settings2').append(panelHtml());
         $('#autolife_sched_head').html(schedHeadHtml());
 
-        // character config inside ST's character editor (retried, with drawer fallback)
-        scheduleEditorInjection();
+        // character config: editor form + Advanced Definitions popup (self-healing)
+        startEditorWatchdog();
 
         // chat strip above the chat
         $('#chat').before(chatStripHtml());
