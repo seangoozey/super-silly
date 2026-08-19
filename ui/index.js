@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.7';
+const EXT_VERSION = '0.4.8';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -896,6 +896,16 @@ function connectEvents() {
                 $feed.prepend(auditRow(data));
                 $feed.children().slice(120).remove();
                 applyAuditFilter();
+                break;
+            }
+            case 'telegram_inbound': {
+                // a message you sent on Telegram landed in the active chat file —
+                // refresh the open web chat so both surfaces stay in sync
+                refreshStatus();
+                const open = currentCharacterName();
+                if (open === data.character && !$('#mes_stop').is(':visible')) {
+                    try { ST.reloadCurrentChat(); } catch { /* ignore */ }
+                }
                 break;
             }
             case 'character_message': {

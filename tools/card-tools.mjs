@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractCardFromPng, embedCardInPng, generatePlaceholderAvatar } from '../plugin/src/card-io.js';
+import { extractCardFromPng, embedCardInPng, purgeCardFromPng, generatePlaceholderAvatar } from '../plugin/src/card-io.js';
 import { validateCard } from '../plugin/src/autolife-schema.js';
 import { TEMPLATES, buildFromTemplate } from './templates.mjs';
 
@@ -21,6 +21,9 @@ function usage(code = 0) {
 Commands:
   create --name <name> --template <t> [--tz <tz>] [--out <file.json>]
   embed <card.json> [--avatar <img.png>] [-o <out.png>]
+                                (embed always replaces any existing card chunks)
+  purge <image.png> [-o <out.png>]
+                                (strips ALL card data; in place unless -o given)
   validate <file...>        (.png or .json cards)
   inspect <file>
   list-templates`);
@@ -89,6 +92,25 @@ switch (command) {
         }
         console.log(`Wrote ${out} (${(png.length / 1024).toFixed(0)} KB, card: ${name}${avatar ? '' : ', placeholder avatar'})`);
         break;
+    }
+
+    case 'purge': {
+        const file = process.argv[3];
+        if (!file || !file.toLowerCase().endsWith('.png')) {
+            console.error('Usage: purge <image.png> [-o <out.png>]');
+            process.exit(1);
+        }
+        const out = arg('-o') ?? arg('--out') ?? file;
+        const cleaned = purgeCardFromPng(fs.readFileSync(file));
+        fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+        fs.writeFileSync(out, cleaned);
+        let cardGone = true;
+        try {
+            extractCardFromPng(cleaned);
+            cardGone = false;
+        } catch { /* expected: no card left */ }
+        console.log(`Purged card data -> ${out} (${(cleaned.length / 1024).toFixed(0)} KB, ${cardGone ? 'no card remains' : 'WARNING: a card chunk is still present'})`);
+        process.exit(cardGone ? 0 : 1);
     }
 
     case 'validate': {

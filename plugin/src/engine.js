@@ -269,6 +269,18 @@ export class Engine {
         // index the user message for long-term memory (works from both surfaces)
         await this.#remember(entry, state.chatFile, 'user', String(mes ?? ''), sendDate);
 
+        if (source === 'web') {
+            // mirror your web messages to bound Telegram chats (prefixed) so
+            // the phone thread stays coherent — character replies already go there
+            for (const t of this.transports) {
+                try {
+                    await t.deliver?.(entry.name, `You: ${String(mes ?? '').slice(0, 3900)}`);
+                } catch (err) {
+                    this.log(`web->telegram mirror for "${entry.name}" failed: ${err.message}`);
+                }
+            }
+        }
+
         const life = evaluate(entry.autolife, now);
         const userRepliedToInitiative = state.lastInitiativeAt && (!state.lastUserMessageAt || new Date(state.lastInitiativeAt) > new Date(state.lastUserMessageAt));
 

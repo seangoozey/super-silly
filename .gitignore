@@ -5,3 +5,4 @@ dev/
 .DS_Store
 Thumbs.db
 .env
+cards/build

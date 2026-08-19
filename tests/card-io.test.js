@@ -6,6 +6,7 @@ import {
     parseChunks,
     extractCardFromPng,
     embedCardInPng,
+    purgeCardFromPng,
     readTextChunks,
     withAutolife,
     getAutolife,
@@ -73,6 +74,22 @@ test('withAutolife clones and replaces only the autolife block', () => {
     assert.equal(card.data.extensions.autolife.timezone, 'UTC'); // original untouched
     assert.equal(updated.data.extensions.autolife.timezone, 'Europe/Berlin');
     assert.equal(updated.data.name, original.data.name);
+});
+
+test('purge removes card chunks, keeps foreign chunks, allows re-embed', () => {
+    const withCard = embedCardInPng(generatePlaceholderAvatar('Purgey', 64), card);
+    const sig = withCard.subarray(0, 8);
+    const patched = Buffer.concat([sig, buildTextChunk('note', 'hi'), withCard.subarray(8)]);
+
+    const purged = purgeCardFromPng(patched);
+    const texts = readTextChunks(parseChunks(purged));
+    assert.ok(!texts.has('ccv3') && !texts.has('chara'), 'card chunks gone');
+    assert.equal(texts.get('note'), 'hi', 'foreign chunk preserved');
+    assert.throws(() => extractCardFromPng(purged), /No character card/);
+
+    // a fresh embed lands cleanly after purge
+    const reembedded = embedCardInPng(purged, card);
+    assert.equal(extractCardFromPng(reembedded).card.data.name, 'Testa Carda');
 });
 
 test('safeName strips path-hostile characters', () => {

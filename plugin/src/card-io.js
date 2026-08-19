@@ -146,6 +146,24 @@ export function parseCardBuffer(buffer, filename = '') {
     return extractCardFromPng(buffer).card;
 }
 
+/**
+ * Remove ALL character-card chunks (ccv3/chara) from a PNG, leaving every
+ * other chunk untouched — a clean avatar ready to be re-embedded later.
+ */
+export function purgeCardFromPng(png) {
+    const chunks = parseChunks(png);
+    const parts = [PNG_SIGNATURE];
+    for (const chunk of chunks) {
+        if (chunk.type === 'tEXt') {
+            const nul = chunk.data.indexOf(0);
+            const keyword = nul > 0 ? chunk.data.toString('latin1', 0, nul) : '';
+            if (keyword === 'ccv3' || keyword === 'chara') continue;
+        }
+        parts.push(buildChunk(chunk.type, chunk.data));
+    }
+    return Buffer.concat(parts);
+}
+
 export function getAutolife(card) {
     return card?.data?.extensions?.autolife ?? null;
 }

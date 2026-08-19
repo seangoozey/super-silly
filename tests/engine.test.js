@@ -318,6 +318,19 @@ test('persona name resolves from SillyTavern chat headers, not the placeholder',
     assert.equal(h.chatStore.userName, 'Sean');
 });
 
+test('web inbound messages mirror to telegram with You: prefix; telegram does not', async () => {
+    const card = characterCard('Mirra');
+    const h = buildHarness({ card, rngValues: [0.99, 0.99] }); // -> delayed, no reply yet
+    await h.engine.onInbound({ character: 'Mirra', mes: 'see you friday', source: 'web' });
+    assert.equal(h.delivered.length, 1);
+    assert.equal(h.delivered[0].text, 'You: see you friday');
+    assert.equal(h.delivered[0].character, 'Mirra');
+
+    const before = h.delivered.length;
+    await h.engine.onInbound({ character: 'Mirra', mes: 'from telegram', source: 'telegram' });
+    assert.equal(h.delivered.length, before, 'telegram-source inbound is not mirrored back');
+});
+
 test('status() summarizes life state', async () => {
     const card = characterCard('Sasha');
     const h = buildHarness({ card });
