@@ -462,6 +462,8 @@ export class Engine {
         });
 
         const numPredict = NUM_PREDICT[entry.autolife.behavior?.avg_message_length ?? 'short'] ?? 160;
+        const think = this.settings.model?.think ?? 'off';
+        const genNumPredict = think === 'on' ? numPredict + 600 : numPredict; // thinking needs room beyond the message
         const memoryBlock = ['reply', 'catchup', 'followup'].includes(kind)
             ? await this.#recallFor(entry, history)
             : null;
@@ -487,7 +489,8 @@ export class Engine {
                     model,
                     messages,
                     temperature: this.settings.model?.temperature ?? 0.9,
-                    numPredict,
+                    numPredict: genNumPredict,
+                    think,
                 });
                 text = cleanModelOutput(raw);
                 if (!text) {
@@ -496,7 +499,8 @@ export class Engine {
                         model,
                         messages: [...messages, { role: 'assistant', content: '(continue — send the actual text message now)' }, { role: 'user', content: '...' }],
                         temperature: this.settings.model?.temperature ?? 0.9,
-                        numPredict,
+                        numPredict: genNumPredict,
+                        think,
                     });
                     text = cleanModelOutput(retry);
                 }

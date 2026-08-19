@@ -239,6 +239,22 @@ export function createCommandRegistry(ctx) {
                 return;
             }
 
+            if (sub === 'think') {
+                const mode = (args[1] ?? '').toLowerCase();
+                if (!['on', 'off', 'auto'].includes(mode)) {
+                    return transport.send(chatId,
+                        `Thinking is currently: ${settings.model.think ?? 'off'}\n` +
+                        'Usage: /model think <on|off|auto>\n' +
+                        '- off: no reasoning — fast, short texts (recommended default)\n' +
+                        '- on: model reasons before texting (needs a thinking model, e.g. Dark-Scarlett)\n' +
+                        '- auto: whatever the model\'s own template defaults to');
+                }
+                settings.model.think = mode;
+                store.saveSettings(settings);
+                engine.refreshSettings();
+                return transport.send(chatId, `Thinking set to ${mode}.`);
+            }
+
             if (sub === 'pull') {
                 const name = args.slice(1).join(' ').trim();
                 if (!name) return transport.send(chatId, 'Usage: /model pull <name>');

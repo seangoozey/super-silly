@@ -172,6 +172,12 @@ function panelHtml() {
                         <select id="autolife_model_select"></select>
                         <label>or enter any model</label>
                         <input type="text" id="autolife_model_free" placeholder="hf.co/user/repo:Q4_K_M">
+                        <label>Thinking (engine replies)</label>
+                        <select id="autolife_think">
+                            <option value="off">off — fast short texts (default)</option>
+                            <option value="on">on — model reasons first (thinking models)</option>
+                            <option value="auto">auto — model template default</option>
+                        </select>
                     </div>
                     <div style="margin-top:6px;">
                         <button class="menu_button autolife-btn" id="autolife_model_use">Use</button>
@@ -421,6 +427,7 @@ async function loadModelSection() {
             })),
         ];
         $('#autolife_model_select').html(options.map((o) => `<option value="${o.value}" ${o.value === m.current ? 'selected' : ''}>${o.label}</option>`).join(''));
+        $('#autolife_think').val(m.think ?? 'off');
         refreshModelButtons();
     } catch { /* ignore */ }
 }
@@ -672,6 +679,14 @@ function wireEvents() {
             msg.text(`error: ${e.message}`);
         }
         setTimeout(() => msg.text(''), 4000);
+    });
+
+    $('#autolife_think').on('change', async (ev) => {
+        const think = ev.target.value;
+        try {
+            await api('/settings', 'POST', { model: { think } });
+            toast(`Thinking set to ${think}`);
+        } catch (e) { toast(e.message); }
     });
 
     const chosenModel = () => $('#autolife_model_free').val().trim() || $('#autolife_model_select').val();

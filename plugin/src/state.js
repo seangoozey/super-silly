@@ -15,6 +15,11 @@ export function defaultSettings() {
             fallback: DEFAULT_FALLBACK,
             current: DEFAULT_PRIMARY,
             temperature: 0.9,
+            // 'off' (default: fast short texts, thinking suppressed — recommended
+            // for the texting sim), 'on' (model reasons first; needs a thinking-
+            // capable model like Dark-Scarlett and gets extra token headroom),
+            // 'auto' (omit the flag; the model's chat template default decides).
+            think: 'off',
         },
         engine: {
             tick_seconds: 30,

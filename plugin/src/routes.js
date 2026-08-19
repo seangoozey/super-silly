@@ -251,6 +251,7 @@ export function registerRoutes(router, deps) {
         } catch { /* ollama down — still return presets */ }
         res.json({
             current: settings.model.current,
+            think: settings.model.think ?? 'off',
             presets: [settings.model.primary, settings.model.fallback].filter(Boolean),
             local,
         });

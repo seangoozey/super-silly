@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OllamaClient } from '../plugin/src/llm.js';
+import { OllamaClient, cleanModelOutput } from '../plugin/src/llm.js';
 
 function pullFetch(lines, { splitMidLine = true } = {}) {
     const ndjson = lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
@@ -70,4 +70,36 @@ test('pull() works with a non-streaming fetch stub', async () => {
     const events = [];
     await client.pull('x', (p) => events.push(p));
     assert.equal(events[1].status, 'success');
+});
+
+test('chat(): think flag mapping + fallback when model rejects it', async () => {
+    const bodies = [];
+    const responses = [];
+    const client = new OllamaClient({
+        fetchImpl: async (_url, init) => {
+            bodies.push(JSON.parse(init.body));
+            if (bodies.length === 1) {
+                return { ok: false, status: 400, json: async () => ({ error: 'model does not support thinking' }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ message: { content: 'hi' } }) };
+        },
+    });
+
+    await client.chat({ model: 'scarlett', messages: [], think: 'off' });
+    assert.equal(bodies[0].think, false);
+    // 400 mentioning think -> retried without the flag
+    assert.equal(bodies[1].think, undefined);
+    assert.equal('think' in bodies[1], false);
+
+    await client.chat({ model: 'scarlett', messages: [], think: 'on' });
+    assert.equal(bodies[2].think, true);
+
+    await client.chat({ model: 'scarlett', messages: [], think: 'auto' });
+    assert.equal('think' in bodies[3], false);
+});
+
+test('cleanModelOutput strips thinking blocks', () => {
+    assert.equal(cleanModelOutput('<think>user is asking about pizza</think>yeah pizza sounds good'), 'yeah pizza sounds good');
+    assert.equal(cleanModelOutput('<think>truncated thinking with no close tag'), '');
+    assert.equal(cleanModelOutput('plain reply'), 'plain reply');
 });

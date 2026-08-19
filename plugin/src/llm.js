@@ -137,24 +137,40 @@ export class OllamaClient {
 
     /**
      * One-shot chat completion. Returns the assistant message text.
-     * @param {{ model: string, messages: Array<{role:string,content:string}>, temperature?: number, numPredict?: number }} req
+     * @param {{ model: string, messages: Array<{role:string,content:string}>, temperature?: number,
+     *           numPredict?: number, think?: 'on'|'off'|'auto' }} req
+     * `think: 'on'|'off'` maps to Ollama's boolean `think` flag; 'auto'/undefined
+     * omits it so the model's own chat template default decides. Models that
+     * reject the flag fall back to an omit-retry.
      */
     async chat(req) {
-        const res = await this.fetchImpl(`${this.baseUrl}/api/chat`, {
+        const send = async (body) => this.fetchImpl(`${this.baseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: req.model,
-                messages: req.messages,
-                stream: false,
-                options: {
-                    temperature: req.temperature ?? 0.9,
-                    num_predict: req.numPredict ?? 160,
-                },
-            }),
+            body: JSON.stringify(body),
             signal: this._signal(this.timeoutMs),
         });
-        const json = await res.json().catch(() => ({}));
+
+        const body = {
+            model: req.model,
+            messages: req.messages,
+            stream: false,
+            options: {
+                temperature: req.temperature ?? 0.9,
+                num_predict: req.numPredict ?? 160,
+            },
+        };
+        if (req.think === 'on') body.think = true;
+        else if (req.think === 'off') body.think = false;
+
+        let res = await send(body);
+        let json = await res.json().catch(() => ({}));
+        if (res.status === 400 && body.think !== undefined && /think/i.test(String(json.error ?? ''))) {
+            this.log(`model "${req.model}" rejected the think flag (${json.error}) — retrying without it`);
+            delete body.think;
+            res = await send(body);
+            json = await res.json().catch(() => ({}));
+        }
         if (!res.ok) {
             throw new Error(`Ollama /api/chat -> HTTP ${res.status}: ${json.error ?? ''}`);
         }
@@ -181,7 +197,8 @@ export class OllamaClient {
     _signal(ms) {
         if (!ms) return undefined;
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), ms);
+        const timer = setTimeout(() => controller.abort(), ms);
+        timer.unref?.(); // don't hold the process open for a pending abort
         return controller.signal;
     }
 }
@@ -294,6 +311,10 @@ export function buildJournalPrompt(ctx) {
 /** Clean up raw model output into something text-message shaped. */
 export function cleanModelOutput(text) {
     let out = String(text ?? '').trim();
+    // strip reasoning/thinking blocks (Ollama usually separates these, but a
+    // model with thinking enabled by its template can still leak them)
+    out = out.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    out = out.replace(/^<think>[\s\S]*$/i, '').trim(); // unclosed (truncated) thinking
     // strip wrapping quotes people/models love to add
     out = out.replace(/^["“](.*)["”]$/s, '$1').trim();
     // drop "Name:" prefixes if the model LARPs the chat log format
