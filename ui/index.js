@@ -900,23 +900,58 @@ function onUserMessage() {
 
 // ---------------------------------------------------------------- bootstrap
 
+/**
+ * Inject the per-character config into ST's character editor.
+ * ST 1.18: the editor form is #form_create (inside #rm_ch_create_block);
+ * older builds used #character_editing. The form exists statically, but be
+ * defensive: retry briefly, then fall back to the drawer panel so config is
+ * never unreachable.
+ */
+function injectEditorSection() {
+    if ($('.autolife-editor-section').length) return true;
+    const $target = $('#form_create').length
+        ? $('#form_create')
+        : ($('#character_editing').length ? $('#character_editing') : null);
+    if ($target) {
+        $target.append(editorHtml());
+        return true;
+    }
+    return false;
+}
+
+function scheduleEditorInjection() {
+    if (injectEditorSection()) return;
+    let tries = 0;
+    const timer = setInterval(() => {
+        tries += 1;
+        if (injectEditorSection() || tries > 30) {
+            clearInterval(timer);
+            if (tries > 30) {
+                // editor form never appeared — keep the config reachable in the drawer
+                $('#extensions_settings2').find('.autolife-panel').prepend(editorHtml());
+            }
+        }
+    }, 1000);
+}
+
 jQuery(() => {
-    const init = async () => {
-        ST = (window.SillyTavern?.getContext) ? window.SillyTavern.getContext() : null;
-        if (!ST) return setTimeout(init, 500);
+    const init = async (attempt = 0) => {
+        try {
+            ST = (typeof window.SillyTavern?.getContext === 'function') ? window.SillyTavern.getContext() : null;
+        } catch {
+            ST = null; // called before ST finished init — retry
+        }
+        if (!ST) {
+            if (attempt < 90) return setTimeout(() => init(attempt + 1), 500);
+            return; // ST never became available; nothing we can do
+        }
 
         // dashboard panel in the extensions drawer
         $('#extensions_settings2').append(panelHtml());
         $('#autolife_sched_head').html(schedHeadHtml());
 
-        // character config inside ST's character editor (falls back to the drawer)
-        const $editor = $('#character_editing');
-        if ($editor.length) {
-            $editor.append(editorHtml());
-        } else {
-            // no editor panel found (unexpected ST layout) — keep it reachable
-            $('#extensions_settings2').find('.autolife-panel').prepend(editorHtml());
-        }
+        // character config inside ST's character editor (retried, with drawer fallback)
+        scheduleEditorInjection();
 
         // chat strip above the chat
         $('#chat').before(chatStripHtml());
