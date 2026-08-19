@@ -19,12 +19,13 @@ if [ ! -f "$APP/config/config.yaml" ]; then
     cp "$SEED/seed/config.yaml" "$APP/config/config.yaml"
 fi
 
-# UI extension (per-user, lives in data)
-if [ ! -d "$APP/data/default-user/extensions/autolife-ui" ]; then
-    log "installing Autolife UI extension"
-    mkdir -p "$APP/data/default-user/extensions"
-    cp -r "$SEED/ui" "$APP/data/default-user/extensions/autolife-ui"
-fi
+# UI extension (per-user, lives in the data volume). Always refreshed from the
+# seed so image updates reach existing volumes — this dir is plugin code, not
+# user data (settings live server-side).
+log "installing/refreshing Autolife UI extension"
+mkdir -p "$APP/data/default-user/extensions"
+rm -rf "$APP/data/default-user/extensions/autolife-ui"
+cp -r "$SEED/ui" "$APP/data/default-user/extensions/autolife-ui"
 
 # example characters on first boot (only when the user has none yet)
 if [ -z "$(ls -A "$APP/data/default-user/characters" 2>/dev/null)" ]; then
