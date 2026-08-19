@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01 } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildMemoryContext, cleanModelOutput, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -46,6 +46,8 @@ export class Engine {
     start() {
         if (this.timer) return;
         this.running = true;
+        this.refreshSettings();
+        this.applyBootPolicy();
         const loop = async () => {
             try {
                 await this.tick();
@@ -57,6 +59,29 @@ export class Engine {
         this.timer = setInterval(loop, this.tickSeconds * 1000);
         this.timer.unref?.();
         this.log(`engine started (tick: ${this.tickSeconds}s)`);
+    }
+
+    /**
+     * Boot policy: characters start stopped when the server starts, so a
+     * container rebuild never wakes everyone up unattended.
+     * @returns {number} how many characters were stopped
+     */
+    applyBootPolicy() {
+        if (this.settings.engine?.start_stopped === false) return 0;
+        let stopped = 0;
+        for (const entry of this.cards.autolifeCharacters()) {
+            const state = this.#state(entry);
+            if (state.enabled) {
+                state.enabled = false;
+                this.store.saveState(state);
+                stopped += 1;
+            }
+        }
+        if (stopped) {
+            this.#audit(null, 'state_changed', `server started — ${stopped} character${stopped > 1 ? 's' : ''} set to stopped (start them from the Autolife panel or /start in Telegram)`);
+            this.log(`${stopped} character(s) start stopped per engine.start_stopped policy`);
+        }
+        return stopped;
     }
 
     stop() {
@@ -249,6 +274,7 @@ export class Engine {
 
         if (!state.enabled || state.paused) {
             this.store.saveState(state);
+            this.#audit(entry.name, 'state_changed', `message received but character is ${state.paused ? 'paused' : 'stopped'} — no reply`);
             return;
         }
 
@@ -549,7 +575,7 @@ export class Engine {
     }
 
     async #journal(entry, state, life, now) {
-        const prompt = buildJournalPrompt({
+        const directive = buildJournalPrompt({
             card: entry.card,
             life,
             userName: this.chatStore.userName,
@@ -557,12 +583,17 @@ export class Engine {
         try {
             const model = this.effectiveModel();
             if (!(await this.ollama.hasModel(model))) return;
-            const raw = await this.ollama.chat({
-                model,
-                messages: [{ role: 'user', content: prompt }],
-                temperature: 0.8,
-                numPredict: 90,
-            });
+            const history = historyToOllama(
+                this.chatStore.readMessages(entry.name, state.chatFile, 10),
+                entry.name,
+                this.chatStore.userName,
+            );
+            const messages = [
+                { role: 'system', content: directive },
+                ...history,
+                { role: 'user', content: '(write your private note for right now)' },
+            ];
+            const raw = await this.ollama.chat({ model, messages, temperature: 0.8, numPredict: 90 });
             const text = cleanModelOutput(raw);
             if (!text) return;
             state.journal = [...(state.journal ?? []), { ts: now.toISOString(), text }].slice(-40);

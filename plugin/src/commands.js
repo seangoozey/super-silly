@@ -70,10 +70,11 @@ export function createCommandRegistry(ctx) {
                 '/chars — list characters\n' +
                 '/switch <name> — talk to a character\n' +
                 '/status — what your character is up to\n' +
+                '/start, /stop — full stop/start (they begin stopped after server restarts)\n' +
+                '/pause, /resume — soft pause of the character\'s life\n' +
                 '/audit [on|off] — see every engine decision as it happens\n' +
                 '/memory — long-term memory status\n' +
                 '/model — model control (list/use/pull)\n' +
-                '/pause, /resume — pause the character\'s life\n' +
                 '/upload — attach a character card (.png/.json) to import it\n\n' +
                 'Then just text them like a real person. They might reply instantly… or a while later. Or be asleep.');
         },
@@ -116,7 +117,9 @@ export function createCommandRegistry(ctx) {
             }
             const file = await transport.bind(chatId, entry);
             log(`telegram chat ${chatId} bound to "${entry.name}" (${file})`);
-            await transport.send(chatId, `You're now texting ${entry.name}.\n\n${characterSummary(entry)}`);
+            const state = store.loadState(entry.name, { initialRelationship: entry.autolife?.relationship?.initial });
+            const stoppedNote = state.enabled === false ? '\n⚠️ They are currently STOPPED (characters start stopped after server restarts) — /start to let them text you.' : '';
+            await transport.send(chatId, `You're now texting ${entry.name}.\n\n${characterSummary(entry)}${stoppedNote}`);
             const greeting = entry.card?.data?.first_mes;
             if (greeting) {
                 await transport.send(chatId, chatStore.substituteMacros(greeting, entry.name));
@@ -139,6 +142,33 @@ export function createCommandRegistry(ctx) {
                 return;
             }
             await transport.send(chatId, characterSummary(entry));
+        },
+    });
+
+    register({
+        name: 'start',
+        help: 'start the bound character (after server restarts they begin stopped)',
+        run: async (chatId) => {
+            const binding = bindingFor(chatId);
+            if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
+            const state = store.loadState(binding.character, { initialRelationship: 20 });
+            state.enabled = true;
+            state.paused = false;
+            store.saveState(state);
+            await transport.send(chatId, `${binding.character} is live — schedule, replies and initiative are running.`);
+        },
+    });
+
+    register({
+        name: 'stop',
+        help: 'stop the bound character entirely (no replies, no initiative)',
+        run: async (chatId) => {
+            const binding = bindingFor(chatId);
+            if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
+            const state = store.loadState(binding.character, { initialRelationship: 20 });
+            state.enabled = false;
+            store.saveState(state);
+            await transport.send(chatId, `${binding.character} is stopped — completely hands-off until /start.`);
         },
     });
 

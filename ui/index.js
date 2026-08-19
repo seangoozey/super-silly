@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.3';
+const EXT_VERSION = '0.4.4';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -459,7 +459,7 @@ function renderMonitor(characters) {
             <a class="autolife-btn" data-force="${c.name}" title="force a message now"><i class="fa-solid fa-bolt"></i></a>
             <a class="autolife-btn" data-pause="${c.name}" data-paused="${c.paused ? 1 : 0}" title="${c.paused ? 'resume' : 'pause'}"><i class="fa-solid fa-${c.paused ? 'play' : 'pause'}"></i></a>`;
         return `<tr>
-            <td data-panelname="${c.name}" class="autolife-panel-launch" title="open the Autolife panel"><b>${c.name}</b>${c.paused ? ' <span class="autolife-muted">(paused)</span>' : ''}</td>
+            <td data-panelname="${c.name}" class="autolife-panel-launch" title="open the Autolife panel"><b>${c.name}</b>${c.paused ? ' <span class="autolife-muted">(paused)</span>' : (!c.enabled ? ' <span class="autolife-muted">(stopped)</span>' : '')}</td>
             <td>${c.activity}<div class="autolife-avail-bar"><div style="width:${avail}%"></div></div></td>
             <td>${c.localTime}</td>
             <td>rel ${Math.round(c.relationship)}</td>
@@ -614,17 +614,20 @@ function updateChatStrip() {
     if (!$strip.length) return;
     const name = currentCharacterName();
     const status = name ? state.charStatus.get(name) : null;
-    if (!status || !state.enabled.has(name)) {
+    if (!status) {
         $strip.hide();
         return;
     }
     $strip.show();
-    $strip.find('.autolife-strip-name').text(`${name} · ${status.paused ? 'paused' : 'alive'}`);
+    const life = status.enabled
+        ? (status.paused ? 'paused' : 'alive')
+        : 'STOPPED — start them from the Autolife panel';
+    $strip.find('.autolife-strip-name').text(`${name} · ${life}`);
     $strip.find('.autolife-strip-activity').text(status.activity + (status.mood ? ` (${status.mood})` : ''));
     $strip.find('.autolife-strip-bar > div').css('width', `${Math.round(status.availability * 100)}%`);
     $strip.find('.autolife-strip-time').text(status.localTime);
     const init = status.initiative ?? {};
-    $strip.find('.autolife-strip-init').text(!init.enabled ? 'initiative off' : (init.blockedReason ? `next text: ${init.blockedReason}` : 'may text you any moment'));
+    $strip.find('.autolife-strip-init').text(!status.enabled ? '' : (!init.enabled ? 'initiative off' : (init.blockedReason ? `next text: ${init.blockedReason}` : 'may text you any moment')));
 }
 
 function ensureTypingBubble() {
@@ -727,6 +730,7 @@ function annotateVisibleMessages() {
 
 const chipFor = (status) => {
     if (!status) return null;
+    if (!status.enabled) return { icon: '⏹', label: 'stopped', cls: 'paused' };
     if (status.paused) return { icon: '⏸', label: 'paused', cls: 'paused' };
     if (status.availability < 0.05) return { icon: '💤', label: status.activity, cls: 'asleep' };
     if (status.availability < 0.35) return { icon: '🏢', label: status.activity, cls: 'busy' };

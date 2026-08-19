@@ -297,14 +297,18 @@ export function buildChatMessages(req) {
 }
 
 /**
- * Prompt for a private journal note.
+ * Directive for a private journal note, GROUNDED in the actual recent
+ * messages: the model must not invent conversations or events involving the
+ * user that didn't happen (ungrounded journals were fabricating shared
+ * history that then leaked into behavior as if it were real).
  */
 export function buildJournalPrompt(ctx) {
     const data = ctx.card.data ?? ctx.card;
     const local = ctx.life.local;
     return [
         `You are ${data.name}. It is ${local.hhmm} on a ${local.weekdayName ?? 'day'} and you are currently ${ctx.life.activity}.`,
-        'Write 1-2 short sentences of private notes to yourself about what you have been doing, thinking, or feeling lately (it may reference your texting with ' + ctx.userName + ' if relevant). Plain text only, first person, no headings.',
+        `Write 1-2 short sentences of private notes to yourself about what you have been doing, thinking, or feeling.`,
+        `Ground the notes ONLY in your current activity and the ACTUAL messages shown in this conversation. NEVER invent conversations, events, or things ${ctx.userName} said that are not shown — if nothing notable happened with ${ctx.userName}, write about your own day, thoughts or feelings instead. Plain text only, first person, no headings.`,
     ].join(' ');
 }
 

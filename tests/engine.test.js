@@ -256,6 +256,26 @@ test('memory RAG: old texts get recalled into reply prompts', async () => {
     assert.ok(h.memory.count('Remmy', 'nomic-embed-text') >= 3);
 });
 
+test('applyBootPolicy stops everyone on server start (unless disabled)', async () => {
+    const card = characterCard('Boota');
+    const h = buildHarness({ card });
+    let state = stateOf(h.store, 'Boota');
+    state.enabled = true;
+    h.store.saveState(state);
+
+    const stopped = h.engine.applyBootPolicy();
+    assert.equal(stopped, 1);
+    state = stateOf(h.store, 'Boota');
+    assert.equal(state.enabled, false);
+
+    // policy off -> characters keep running across restarts
+    h.engine.settings.engine.start_stopped = false;
+    state.enabled = true;
+    h.store.saveState(state);
+    assert.equal(h.engine.applyBootPolicy(), 0);
+    assert.equal(stateOf(h.store, 'Boota').enabled, true);
+});
+
 test('status() summarizes life state', async () => {
     const card = characterCard('Sasha');
     const h = buildHarness({ card });

@@ -23,6 +23,10 @@ export function defaultSettings() {
         },
         engine: {
             tick_seconds: 30,
+            // Characters start STOPPED on every server boot; start them from
+            // the Autolife panel or /start. Set false to keep them running
+            // across restarts.
+            start_stopped: true,
         },
         memory: {
             embed_model: process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text',
