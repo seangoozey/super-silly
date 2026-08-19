@@ -136,6 +136,36 @@ export class ChatStore {
             .replaceAll('{{user}}', this.userName);
     }
 
+    /**
+     * Recover the user's real persona name from existing SillyTavern chat
+     * headers (ST stores user_name on the header line). Returns null when no
+     * real name has ever been used — callers fall back to the configured or
+     * default name.
+     */
+    resolveUserName() {
+        if (this._resolvedUserName) return this._resolvedUserName;
+        try {
+            const chatsRoot = path.join(this.userDir, 'chats');
+            if (!fs.existsSync(chatsRoot)) return null;
+            for (const dir of fs.readdirSync(chatsRoot)) {
+                const dirPath = path.join(chatsRoot, dir);
+                if (!fs.statSync(dirPath).isDirectory()) continue;
+                const files = fs.readdirSync(dirPath).filter((f) => f.endsWith('.jsonl')).sort().reverse();
+                for (const file of files) {
+                    try {
+                        const header = JSON.parse(fs.readFileSync(path.join(dirPath, file), 'utf8').split('\n')[0]);
+                        const name = header?.user_name?.trim();
+                        if (name && name !== 'User' && name !== 'unused') {
+                            this._resolvedUserName = name;
+                            return name;
+                        }
+                    } catch { /* skip unreadable chat */ }
+                }
+            }
+        } catch { /* no chats at all */ }
+        return null;
+    }
+
     // ---- message factories (ST-compatible minimal shape) ----
 
     static userMessage(userName, mes, date = new Date()) {

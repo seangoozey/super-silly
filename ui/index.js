@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.4';
+const EXT_VERSION = '0.4.5';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -95,6 +95,12 @@ function panelHtml() {
             </div>
             <div class="inline-drawer-content">
                 <div id="autolife_status" class="autolife-status-line">…</div>
+
+                <div class="autolife-form-grid" style="margin-top:6px;">
+                    <label>Your name (as characters see you)</label>
+                    <span><input type="text" id="autolife_persona_name" placeholder="auto — from your chats">
+                    <button type="button" class="menu_button autolife-btn" id="autolife_persona_save">Save</button></span>
+                </div>
 
                 <div class="autolife-section">
                     <h4>Life monitor</h4>
@@ -830,6 +836,7 @@ function updatePullWidget(d) {
 async function loadTelegramSection() {
     try {
         const { settings } = await api('/settings');
+        $('#autolife_persona_name').val(settings.persona?.name ?? '');
         $('#autolife_tg_token').attr('placeholder', settings.telegram?.hasToken ? settings.telegram.token : '123456:ABC… (from @BotFather)');
         $('#autolife_tg_ids').val((settings.telegram?.allowed_chat_ids ?? []).join(', '));
         const { bindings } = await api('/bindings');
@@ -1068,6 +1075,14 @@ function wireEvents() {
     });
 
     // --- telegram ---
+    $('#autolife_persona_save').on('click', async () => {
+        try {
+            await api('/settings', 'POST', { persona: { name: $('#autolife_persona_name').val() } });
+            toast('Name saved — characters will use it from their next message');
+            refreshStatus();
+        } catch (e) { toast(e.message); }
+    });
+
     $('#autolife_tg_save').on('click', async () => {
         const token = $('#autolife_tg_token').val().trim();
         const ids = $('#autolife_tg_ids').val().split(/[,\s]+/).map((s) => Number(s.trim())).filter(Number.isFinite);

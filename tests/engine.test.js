@@ -276,6 +276,27 @@ test('applyBootPolicy stops everyone on server start (unless disabled)', async (
     assert.equal(stateOf(h.store, 'Boota').enabled, true);
 });
 
+test('persona name resolves from SillyTavern chat headers, not the placeholder', async () => {
+    const card = characterCard('Namer');
+    const h = buildHarness({ card });
+    // engine-created chats carry the default 'User' — resolution must skip those
+    await h.engine.onInbound({ character: 'Namer', mes: 'hello', source: 'telegram' });
+
+    // a web-style chat written by ST itself with the real persona name
+    const chatDir = h.chatStore.chatDir('Namer');
+    const webChat = `${chatDir}${path.sep}web.jsonl`.split(path.sep).join(path.sep);
+    h.chatStore.appendMessage('Namer', 'web.jsonl', h.chatStore.userMessage('hi', new Date()));
+    // rewrite that file's header to look like an ST-authored chat with persona 'Sean'
+    const full = path.join(chatDir, 'web.jsonl');
+    const lines = fs.readFileSync(full, 'utf8').split('\n');
+    lines[0] = JSON.stringify({ chat_metadata: {}, user_name: 'Sean', character_name: 'Namer' });
+    fs.writeFileSync(full, lines.join('\n'), 'utf8');
+
+    assert.equal(h.chatStore.resolveUserName(), 'Sean');
+    h.engine.refreshSettings();
+    assert.equal(h.chatStore.userName, 'Sean');
+});
+
 test('status() summarizes life state', async () => {
     const card = characterCard('Sasha');
     const h = buildHarness({ card });

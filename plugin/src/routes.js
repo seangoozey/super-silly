@@ -208,6 +208,16 @@ export function registerRoutes(router, deps) {
                 audit(null, 'memory', `embedding model changed: ${before ?? '(none)'} -> ${body.memory.embed_model} — existing indexes will rebuild`);
             }
         }
+        if (body.persona) {
+            const before = settings.persona?.name ?? '(auto)';
+            settings.persona = { ...settings.persona, ...body.persona };
+            if (typeof body.persona.name === 'string') {
+                settings.persona.name = body.persona.name.trim();
+                if (settings.persona.name !== before) {
+                    audit(null, 'persona', `user name characters see changed: ${before} -> ${settings.persona.name || '(auto-resolve)'}`);
+                }
+            }
+        }
         if (body.telegram) {
             // empty token string means "keep existing"; explicit null clears it
             if (typeof body.telegram.token === 'string' && body.telegram.token.trim()) settings.telegram.token = body.telegram.token.trim();

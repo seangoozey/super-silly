@@ -31,6 +31,11 @@ export function defaultSettings() {
         memory: {
             embed_model: process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text',
         },
+        persona: {
+            // How characters address you. Empty = auto-resolve from your
+            // SillyTavern chat headers; falls back to 'User'.
+            name: process.env.AUTOLIFE_USER_NAME || '',
+        },
         telegram: {
             // Token/allowlist: settings file wins, env (set by the container) is the fallback.
             token: '',
@@ -83,6 +88,7 @@ export class StateStore {
             model: { ...base.model, ...(saved.model ?? {}) },
             engine: { ...base.engine, ...(saved.engine ?? {}) },
             memory: { ...base.memory, ...(saved.memory ?? {}) },
+            persona: { ...base.persona, ...(saved.persona ?? {}) },
             telegram: { ...base.telegram, ...(saved.telegram ?? {}) },
         };
         if (!merged.telegram.token && process.env.TELEGRAM_BOT_TOKEN) merged.telegram.token = process.env.TELEGRAM_BOT_TOKEN;

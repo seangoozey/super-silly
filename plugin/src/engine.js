@@ -29,6 +29,7 @@ export class Engine {
         this.emit = deps.emit ?? (() => {});
         this.transports = deps.transports ?? [];
         this.settings = this.store.loadSettings();
+        this.#applyUserName();
         this.inFlight = new Map(); // character name -> Promise
         this.blockMemo = new Map(); // character name -> last initiative-block reason (audit on change)
         this.timer = null;
@@ -41,6 +42,18 @@ export class Engine {
 
     refreshSettings() {
         this.settings = this.store.loadSettings();
+        this.#applyUserName();
+    }
+
+    /**
+     * The name characters know you by, everywhere the engine speaks about
+     * you: panel-configured name > real persona recovered from SillyTavern
+     * chat headers > 'User'. Never the raw placeholder when a real name
+     * exists.
+     */
+    #applyUserName() {
+        const configured = this.settings.persona?.name?.trim();
+        this.chatStore.userName = configured || this.chatStore.resolveUserName() || 'User';
     }
 
     start() {
