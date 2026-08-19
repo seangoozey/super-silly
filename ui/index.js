@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.10';
+const EXT_VERSION = '0.4.11';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -769,17 +769,33 @@ function applyCharacterChips() {
     if (!ST?.characters) return;
     $('#rm_print_characters_block .character_select').each((_, el) => {
         const $el = $(el);
+        $el.find('.autolife-chip, .autolife-tile-ctrls').remove();
+
+        // Per-tile identity: the tile's OWN displayed name (text nodes only, so
+        // our injected spans don't pollute the match). The chid->characters[]
+        // indirection proved unreliable (tiles were picking up another tile's
+        // data); the displayed name cannot cross-wire. chid stays as fallback.
+        const tileName = String($el.find('.ch_name').contents().filter((_, n) => n.nodeType === 3).text() ?? '').trim();
         const chid = Number($el.attr('chid'));
-        const character = ST.characters[chid];
-        if (!character?.name) return;
-        $el.find('.autolife-chip').remove();
-        const status = state.charStatus.get(character.name);
+        const byId = Number.isInteger(chid) && chid >= 0 ? ST.characters[chid]?.name : null;
+        const name = tileName && state.charStatus.has(tileName) ? tileName : byId;
+        const status = name ? state.charStatus.get(name) : null;
         if (!status) return; // not an autolife character
+
         const chip = chipFor(status);
         const $name = $el.find('.ch_name');
-        if ($name.length && chip) {
-            $name.append(` <span class="autolife-chip autolife-chip-${chip.cls}" data-name="${character.name}" title="${status.activity} · ${status.localTime} — click for the Autolife panel">${chip.icon}</span>`);
+        if (!$name.length) return;
+        if (chip) {
+            $name.append(` <span class="autolife-chip autolife-chip-${chip.cls}" data-name="${name}" title="${name}: ${status.activity} · ${status.localTime} — click for the Autolife panel">${chip.icon}</span>`);
         }
+        // Play/Stop | Pause controls, right on the tile
+        const lifecycle = status.enabled
+            ? `<a class="autolife-tile-btn" data-name="${name}" data-action="lifecycle" title="Stop ${name} (hands-off until started again)">⏹</a>`
+            : `<a class="autolife-tile-btn" data-name="${name}" data-action="lifecycle" title="Start ${name} (schedule, replies, initiative)">▶</a>`;
+        const pause = status.enabled
+            ? `<a class="autolife-tile-btn" data-name="${name}" data-action="pause" title="${status.paused ? 'Resume' : 'Pause'} ${name}">${status.paused ? '⏯' : '⏸'}</a>`
+            : '';
+        $name.append(`<span class="autolife-tile-ctrls">${lifecycle}${pause}</span>`);
     });
 }
 
@@ -1063,6 +1079,27 @@ function wireEvents() {
         ev.preventDefault();
         const name = chip.getAttribute('data-name');
         if (name) openCharacterPanel(name);
+    }, true);
+
+    // Play/Stop | Pause buttons on the tiles (capture phase, same as chips)
+    document.addEventListener('click', (ev) => {
+        const btn = ev.target?.closest?.('.autolife-tile-btn');
+        if (!btn) return;
+        ev.stopPropagation();
+        ev.preventDefault();
+        const name = btn.getAttribute('data-name');
+        const action = btn.getAttribute('data-action');
+        const status = name ? state.charStatus.get(name) : null;
+        if (!name) return;
+        if (action === 'lifecycle') {
+            api('/enable', 'POST', { name, enabled: status ? !status.enabled : true })
+                .then(() => refreshStatus())
+                .catch((e) => toast(e.message));
+        } else if (action === 'pause') {
+            api('/pause', 'POST', { name, paused: status ? !status.paused : true })
+                .then(() => refreshStatus())
+                .catch((e) => toast(e.message));
+        }
     }, true);
 
     // monitor table names open the panel too
