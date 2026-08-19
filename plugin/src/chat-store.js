@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { safeName } from './card-io.js';
+import { safeName, extractCardFromPng } from './card-io.js';
 
 export class ChatStore {
     /**
@@ -137,13 +137,49 @@ export class ChatStore {
     }
 
     /**
-     * Recover the user's real persona name from existing SillyTavern chat
-     * headers (ST stores user_name on the header line). Returns null when no
-     * real name has ever been used — callers fall back to the configured or
-     * default name.
+     * Recover the user's real persona name, best-effort:
+     *   1. ST's default persona setting (power_user.default_persona in settings.json)
+     *   2. a single persona file in personas/ (name from the embedded card, else filename)
+     *   3. the header of any SillyTavern-authored chat (user_name on line 1)
+     * Returns null when nothing real is found; callers fall back to the
+     * configured or default name.
      */
     resolveUserName() {
         if (this._resolvedUserName) return this._resolvedUserName;
+        const adopt = (n) => {
+            const name = String(n ?? '').trim();
+            if (name && name !== 'User' && name !== 'unused') {
+                this._resolvedUserName = name;
+                return name;
+            }
+            return null;
+        };
+
+        // 1. the default persona the user picked in Persona Management
+        try {
+            const stSettings = JSON.parse(fs.readFileSync(path.join(this.userDir, 'settings.json'), 'utf8'));
+            const defaultPersona = stSettings?.power_user?.default_persona;
+            if (defaultPersona) {
+                const stem = String(defaultPersona).replace(/\.(png|json|webp)$/i, '');
+                const resolved = adopt(this.#personaCardName(stem) ?? stem);
+                if (resolved) return resolved;
+            }
+        } catch { /* no settings.json yet */ }
+
+        // 2. exactly one persona defined — that must be you
+        try {
+            const personasDir = path.join(this.userDir, 'personas');
+            if (fs.existsSync(personasDir)) {
+                const files = fs.readdirSync(personasDir).filter((f) => /\.(png|json)$/i.test(f));
+                if (files.length === 1) {
+                    const stem = files[0].replace(/\.(png|json)$/i, '');
+                    const resolved = adopt(this.#personaCardName(stem) ?? stem);
+                    if (resolved) return resolved;
+                }
+            }
+        } catch { /* personas dir unreadable */ }
+
+        // 3. chat headers written by ST itself
         try {
             const chatsRoot = path.join(this.userDir, 'chats');
             if (!fs.existsSync(chatsRoot)) return null;
@@ -154,15 +190,29 @@ export class ChatStore {
                 for (const file of files) {
                     try {
                         const header = JSON.parse(fs.readFileSync(path.join(dirPath, file), 'utf8').split('\n')[0]);
-                        const name = header?.user_name?.trim();
-                        if (name && name !== 'User' && name !== 'unused') {
-                            this._resolvedUserName = name;
-                            return name;
-                        }
+                        const resolved = adopt(header?.user_name);
+                        if (resolved) return resolved;
                     } catch { /* skip unreadable chat */ }
                 }
             }
         } catch { /* no chats at all */ }
+        return null;
+    }
+
+    /** Name inside a persona card file (personas are character-card PNGs/JSONs), if parseable. */
+    #personaCardName(stem) {
+        try {
+            for (const ext of ['.png', '.json']) {
+                const file = path.join(this.userDir, 'personas', stem + ext);
+                if (!fs.existsSync(file)) continue;
+                if (ext === '.json') {
+                    const card = JSON.parse(fs.readFileSync(file, 'utf8'));
+                    return card?.data?.name ?? card?.name ?? null;
+                }
+                const card = extractCardFromPng(fs.readFileSync(file)).card;
+                return card?.data?.name ?? card?.name ?? null;
+            }
+        } catch { /* unreadable persona card */ }
         return null;
     }
 

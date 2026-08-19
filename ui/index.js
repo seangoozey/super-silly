@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.5';
+const EXT_VERSION = '0.4.6';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -98,7 +98,7 @@ function panelHtml() {
 
                 <div class="autolife-form-grid" style="margin-top:6px;">
                     <label>Your name (as characters see you)</label>
-                    <span><input type="text" id="autolife_persona_name" placeholder="auto — from your chats">
+                    <span><input type="text" id="autolife_persona_name" placeholder="auto — your default ST persona">
                     <button type="button" class="menu_button autolife-btn" id="autolife_persona_save">Save</button></span>
                 </div>
 

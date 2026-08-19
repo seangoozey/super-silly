@@ -276,6 +276,27 @@ test('applyBootPolicy stops everyone on server start (unless disabled)', async (
     assert.equal(stateOf(h.store, 'Boota').enabled, true);
 });
 
+test('persona name resolves from ST default persona setting', async () => {
+    const card = characterCard('Perseus');
+    const h = buildHarness({ card });
+    // no chats, but settings.json declares the default persona
+    fs.writeFileSync(
+        path.join(h.root, 'settings.json'),
+        JSON.stringify({ power_user: { default_persona: 'Sean.png' } }),
+    );
+    assert.equal(h.chatStore.resolveUserName(), 'Sean');
+    h.engine.refreshSettings();
+    assert.equal(h.chatStore.userName, 'Sean');
+});
+
+test('single persona file resolves even without settings or chats', async () => {
+    const card = characterCard('Loner');
+    const h = buildHarness({ card });
+    fs.mkdirSync(path.join(h.root, 'personas'), { recursive: true });
+    fs.writeFileSync(path.join(h.root, 'personas', 'Sean.json'), JSON.stringify({ spec: 'chara_card_v2', data: { name: 'Sean' } }));
+    assert.equal(h.chatStore.resolveUserName(), 'Sean');
+});
+
 test('persona name resolves from SillyTavern chat headers, not the placeholder', async () => {
     const card = characterCard('Namer');
     const h = buildHarness({ card });
