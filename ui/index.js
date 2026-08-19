@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.6';
+const EXT_VERSION = '0.4.7';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -1228,6 +1228,13 @@ jQuery(() => {
             refreshStatus();
             removeTypingBubble();
             annotateVisibleMessages();
+            // tell the engine which chat we have open, so its messages land
+            // in THIS conversation instead of diverging into its own file
+            const name = currentCharacterName();
+            const chatId = ST.chatId ?? (typeof ST.getCurrentChatId === 'function' ? ST.getCurrentChatId() : null);
+            if (name && chatId && state.charStatus.has(name)) {
+                api('/chat-file', 'POST', { name, chatFile: String(chatId) }).catch(() => {});
+            }
         });
         ST.eventSource.on(ST.event_types.MESSAGE_SENT, onUserMessage);
         ST.eventSource.on(ST.event_types.MESSAGE_RECEIVED, () => removeTypingBubble());

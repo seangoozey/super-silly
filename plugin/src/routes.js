@@ -320,6 +320,26 @@ export function registerRoutes(router, deps) {
         res.json({ ok: true });
     }));
 
+    // ---- active chat sync (web UI tells the engine which chat is open) ----
+    router.post('/chat-file', wrap(async (req, res) => {
+        const body = await readBody(req);
+        const entry = cards.find(String(body.name ?? ''));
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${body.name}".` });
+        let file = String(body.chatFile ?? '');
+        if (!file.endsWith('.jsonl')) file += '.jsonl';
+        if (!chatStore.listChats(entry.name).includes(file)) {
+            return res.status(404).json({ error: `Chat file "${file}" not found for ${entry.name}.` });
+        }
+        const state = store.loadState(entry.name, { initialRelationship: entry.autolife?.relationship?.initial ?? 20 });
+        if (state.chatFile !== file) {
+            state.chatFile = file;
+            store.saveState(state);
+            audit(entry.name, 'state_changed', `active chat switched to "${file}" (following the open web-UI chat)`);
+            broadcast('state_changed', { character: entry.name });
+        }
+        res.json({ ok: true, chatFile: file });
+    }));
+
     // ---- per-character panel: relationship + purge ----
     router.post('/relationship', wrap(async (req, res) => {
         const body = await readBody(req);
