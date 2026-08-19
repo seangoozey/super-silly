@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.9';
+const EXT_VERSION = '0.4.10';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -454,6 +454,14 @@ async function refreshStatus() {
     } catch (err) {
         $('#autolife_badge').text('plugin unreachable');
         $('#autolife_status').text(`Autolife ${EXT_VERSION} — could not reach the plugin (${err.message}). Is it enabled in config.yaml?`);
+        // NEVER keep painting stale status: a page that survived a container
+        // rebuild would otherwise keep showing old badges (e.g. "asleep" for
+        // characters the boot policy stopped). Clear everything.
+        state.charStatus = new Map();
+        state.enabled = new Set();
+        $('.autolife-chip').remove();
+        updateChatStrip();
+        updateTypingBubble();
     }
 }
 
@@ -896,6 +904,15 @@ function refreshModelButtons() {
 
 function connectEvents() {
     const es = new EventSource(PLUGIN + '/events');
+    let sseFailures = 0;
+    es.onopen = () => { sseFailures = 0; };
+    es.onerror = () => {
+        // EventSource auto-reconnects; repeated failures mean the live feed is
+        // gone (most commonly a stale page after a container rebuild) — the
+        // data this page holds can no longer be trusted.
+        sseFailures += 1;
+        if (sseFailures >= 5) showReloadBanner();
+    };
     es.onmessage = (ev) => {
         let data;
         try {
