@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.3.3';
+const EXT_VERSION = '0.4.0';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -153,9 +153,10 @@ function panelHtml() {
     </div>`;
 }
 
-// ---------------------------------------------------------------- character editor section (P2)
-// Injected into SillyTavern's character editing panel so Autolife config sits
-// next to description/personality instead of in a drawer.
+// ---------------------------------------------------------------- character editor section (compact launcher)
+// Lives at the bottom of ST's editor form / inside Advanced Definitions when
+// open. Full configuration happens in the dedicated Autolife panel (our own
+// modal — immune to ST DOM changes), opened from here or a character chip.
 
 function editorHtml() {
     return `
@@ -163,10 +164,62 @@ function editorHtml() {
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b>Autolife — <span id="autolife_char_name">—</span></b>
+                <span id="autolife_char_status" class="autolife-muted"></span>
             </div>
             <div class="inline-drawer-content">
-                <label><input type="checkbox" id="autolife_enable"> Enable Autolife for this character</label>
-                <div id="autolife_editor" style="display:none; margin-top:8px;">
+                <label><input type="checkbox" id="autolife_enable"> Autolife enabled (character carries an autolife block)</label>
+                <div style="margin-top:8px;">
+                    <button class="menu_button autolife-btn" id="autolife_open_panel"><i class="fa-solid fa-id-card"></i> Open Autolife panel</button>
+                    <span class="autolife-muted">schedule · journal · relationship · pause/stop/purge</span>
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- dedicated per-character panel (modal)
+
+function panelModalHtml() {
+    return `
+    <div id="autolife_panel_overlay" class="autolife-modal-overlay" style="display:none;">
+        <div class="autolife-modal">
+            <div class="autolife-modal-head">
+                <b>Autolife — <span id="autolife_panel_name">—</span></b>
+                <span id="autolife_panel_life" class="autolife-muted"></span>
+                <a class="autolife-btn" id="autolife_panel_close" title="close"><i class="fa-solid fa-xmark"></i></a>
+            </div>
+            <div class="autolife-modal-body">
+
+                <div class="autolife-section">
+                    <h4>Status &amp; lifecycle</h4>
+                    <div id="autolife_panel_statusline" class="autolife-status-line"></div>
+                    <div>
+                        <button class="menu_button autolife-btn" id="autolife_panel_add" style="display:none;"><i class="fa-solid fa-plus"></i> Add Autolife to this card</button>
+                        <button class="menu_button autolife-btn" id="autolife_panel_force"><i class="fa-solid fa-bolt"></i> Text me now</button>
+                        <button class="menu_button autolife-btn" id="autolife_panel_pause">Pause</button>
+                        <button class="menu_button autolife-btn" id="autolife_panel_stop">Stop</button>
+                        <button class="menu_button autolife-btn autolife-danger" id="autolife_panel_purge"><i class="fa-solid fa-trash-can"></i> Purge state</button>
+                    </div>
+                    <div class="autolife-muted">Pause: no replies, no initiative, resumes where it left off. Stop: Autolife off until re-enabled (ST instant replies return). Purge: wipes relationship, journal, pending replies and the memory index — chats and card are kept.</div>
+                </div>
+
+                <div class="autolife-section">
+                    <h4>Relationship</h4>
+                    <div class="autolife-form-grid">
+                        <label>Score (0–100)</label>
+                        <span><input type="number" id="autolife_panel_rel_now" min="0" max="100" style="width:70px">
+                        <span id="autolife_panel_rel_desc" class="autolife-muted"></span></span>
+                    </div>
+                    <div style="margin-top:4px;"><button class="menu_button autolife-btn" id="autolife_panel_rel_save">Set relationship</button></div>
+                </div>
+
+                <div class="autolife-section">
+                    <h4>Journal <a class="autolife-btn" id="autolife_panel_journal_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a></h4>
+                    <div id="autolife_panel_journal" class="autolife-audit-feed"></div>
+                </div>
+
+                <div class="autolife-section">
+                    <h4>Schedule &amp; behavior <span class="autolife-muted">(saved into the card)</span></h4>
                     <div class="autolife-form-grid">
                         <label for="autolife_tz">Timezone (IANA)</label>
                         <input type="text" id="autolife_tz" placeholder="America/New_York" value="UTC">
@@ -183,6 +236,24 @@ function editorHtml() {
                         <select id="autolife_len"><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select>
                         <label>Catch-up after missed message</label>
                         <input type="checkbox" id="autolife_catchup" checked>
+
+                        <label>Initiative (texts you first)</label>
+                        <input type="checkbox" id="autolife_init_on">
+                        <label>Initiative min gap (min)</label>
+                        <input type="number" id="autolife_init_gap" min="1" max="10080" value="120">
+                        <label>Initiative max / day</label>
+                        <input type="number" id="autolife_init_max" min="0" max="100" value="4">
+                        <label>Double-text after (h, 0=off)</label>
+                        <input type="number" id="autolife_followup" min="0" max="168" value="6">
+
+                        <label>Long-term memory (RAG)</label>
+                        <input type="checkbox" id="autolife_mem_on" checked>
+                        <label>Recalled texts per reply (0–10)</label>
+                        <input type="number" id="autolife_mem_k" min="0" max="10" value="3">
+                        <label>Memory index size (max entries)</label>
+                        <input type="number" id="autolife_mem_max" min="100" max="100000" step="100" value="4000">
+                        <label>Keep a private journal</label>
+                        <input type="checkbox" id="autolife_journal" checked>
                     </div>
 
                     <div style="margin-top:8px;">
@@ -193,36 +264,97 @@ function editorHtml() {
                         <button class="menu_button autolife-btn" id="autolife_add_block">+ add block</button>
                     </div>
 
-                    <div class="autolife-form-grid" style="margin-top:10px;">
-                        <label>Initiative (texts you first)</label>
-                        <input type="checkbox" id="autolife_init_on">
-                        <label>Initiative min gap (min)</label>
-                        <input type="number" id="autolife_init_gap" min="1" max="10080" value="120">
-                        <label>Initiative max / day</label>
-                        <input type="number" id="autolife_init_max" min="0" max="100" value="4">
-                        <label>Double-text after (h, 0=off)</label>
-                        <input type="number" id="autolife_followup" min="0" max="168" value="6">
-                        <label>Relationship start (0–100)</label>
-                        <input type="number" id="autolife_rel" min="0" max="100" value="20">
-                        <label>Keep a private journal</label>
-                        <input type="checkbox" id="autolife_journal" checked>
-                        <label>Long-term memory (RAG)</label>
-                        <input type="checkbox" id="autolife_mem_on" checked>
-                        <label>Recalled texts per reply (0–10)</label>
-                        <input type="number" id="autolife_mem_k" min="0" max="10" value="3">
-                        <label>Memory index size (max entries)</label>
-                        <input type="number" id="autolife_mem_max" min="100" max="100000" step="100" value="4000">
-                    </div>
-
                     <div style="margin-top:10px;">
                         <button class="menu_button autolife-btn" id="autolife_save"><i class="fa-solid fa-floppy-disk"></i> Save card</button>
-                        <button class="menu_button autolife-btn" id="autolife_force"><i class="fa-solid fa-bolt"></i> Force message now</button>
                         <span id="autolife_save_msg" class="autolife-muted"></span>
                     </div>
                 </div>
             </div>
         </div>
     </div>`;
+}
+
+// ---------------------------------------------------------------- panel logic
+
+let panelChar = null;
+
+async function openCharacterPanel(name) {
+    if (!name) return;
+    panelChar = name;
+    $('#autolife_panel_overlay').show();
+    await refreshPanel();
+}
+
+function closeCharacterPanel() {
+    panelChar = null;
+    $('#autolife_panel_overlay').hide();
+}
+
+const relDescriptor = (score) => (score < 20 ? 'distant' : score < 40 ? 'friendly' : score < 60 ? 'close' : score < 80 ? 'very close' : 'deeply bonded');
+
+// stash the card's relationship.initial so panel saves don't clobber it
+let panelInitialRelationship = 20;
+
+async function refreshPanel() {
+    if (!panelChar) return;
+    try {
+        const [status, card] = await Promise.all([
+            api('/status'),
+            api(`/card?name=${encodeURIComponent(panelChar)}`),
+        ]);
+        panelInitialRelationship = card.autolife?.relationship?.initial ?? 20;
+        $('#autolife_panel_add').toggle(!card.autolife);
+        const c = status.engine.characters.find((x) => x.name === panelChar);
+        if (!c) {
+            $('#autolife_panel_name').text(panelChar);
+            $('#autolife_panel_statusline').text(card.autolife
+                ? 'Autolife is stopped for this character.'
+                : 'No autolife block on this card yet — add one to give them a life (enabled by default).');
+            $('#autolife_panel_life').text('');
+            return;
+        }
+        $('#autolife_panel_name').text(c.name);
+        $('#autolife_panel_life').text(`${c.activity} · ${Math.round(c.availability * 100)}% available · ${c.localTime}`);
+        const pending = c.pendingReply
+            ? ` · replies in ~${Math.max(0, Math.round((new Date(c.pendingReply.dueAt) - Date.now()) / 60000))} min`
+            : '';
+        $('#autolife_panel_statusline').text(
+            `${c.paused ? '⏸ paused' : c.enabled ? '● enabled' : '■ stopped'} · relationship ${Math.round(c.relationship)}/100 (${relDescriptor(c.relationship)}) · memory ${c.memoryEntries} texts${pending}`,
+        );
+
+        $('#autolife_panel_pause').text(c.paused ? 'Resume' : 'Pause');
+        $('#autolife_panel_stop').text(c.enabled ? 'Stop' : 'Start');
+        $('#autolife_panel_rel_now').val(Math.round(c.relationship));
+        $('#autolife_panel_rel_desc').text(relDescriptor(c.relationship));
+
+        const journal = (c.journal ?? []).slice().reverse();
+        $('#autolife_panel_journal').html(journal.length
+            ? journal.map((j) => `<div class="autolife-audit-row"><span class="autolife-muted">${new Date(j.ts).toLocaleString()}</span> — ${j.text}</div>`).join('')
+            : '<div class="autolife-muted">No journal entries yet — they accumulate every few waking hours.</div>');
+
+        const a = card.autolife;
+        if (a) {
+            $('#autolife_tz').val(a.timezone ?? 'UTC');
+            $('#autolife_quick').val(a.behavior.quick_reply_chance);
+            $('#autolife_dmin').val(a.behavior.delay_minutes_min);
+            $('#autolife_dmax').val(a.behavior.delay_minutes_max);
+            $('#autolife_busyx').val(a.behavior.busy_delay_multiplier);
+            $('#autolife_ignore').val(a.behavior.ignore_chance);
+            $('#autolife_len').val(a.behavior.avg_message_length);
+            $('#autolife_catchup').prop('checked', !!a.behavior.catch_up);
+            $('#autolife_init_on').prop('checked', !!a.initiative.enabled);
+            $('#autolife_init_gap').val(a.initiative.min_gap_minutes);
+            $('#autolife_init_max').val(a.initiative.max_per_day);
+            $('#autolife_followup').val(a.initiative.followup_on_unread_hours);
+            $('#autolife_journal').prop('checked', !!a.journal?.enabled);
+            $('#autolife_mem_on').prop('checked', a.memory?.enabled ?? true);
+            $('#autolife_mem_k').val(a.memory?.retrieve_count ?? 3);
+            $('#autolife_mem_max').val(a.memory?.max_entries ?? 4000);
+            $('#autolife_sched_rows').html((a.schedule.length ? a.schedule : []).map(schedRowHtml).join(''));
+        }
+    } catch (err) {
+        $('#autolife_panel_statusline').text(`error: ${err.message}`);
+    }
 }
 
 // ---------------------------------------------------------------- schedule editor
@@ -374,44 +506,28 @@ async function loadMemorySection() {
     } catch { /* plugin offline */ }
 }
 
-// ---------------------------------------------------------------- character editor (P2)
+// ---------------------------------------------------------------- character editor section
 
 async function loadCharacterEditor() {
     const name = currentCharacterName();
     lastEditorLoad = { name, ts: Date.now() };
     $('#autolife_char_name').text(name ?? '—');
     if (!name) {
-        $('#autolife_editor').hide();
         $('#autolife_enable').prop('checked', false);
+        $('#autolife_char_status').text('');
         return;
     }
     try {
         const card = await api(`/card?name=${encodeURIComponent(name)}`);
-        const a = card.autolife;
-        $('#autolife_enable').prop('checked', !!a);
-        $('#autolife_editor').toggle(!!a);
-        if (!a) return;
-        $('#autolife_tz').val(a.timezone ?? 'UTC');
-        $('#autolife_quick').val(a.behavior.quick_reply_chance);
-        $('#autolife_dmin').val(a.behavior.delay_minutes_min);
-        $('#autolife_dmax').val(a.behavior.delay_minutes_max);
-        $('#autolife_busyx').val(a.behavior.busy_delay_multiplier);
-        $('#autolife_ignore').val(a.behavior.ignore_chance);
-        $('#autolife_len').val(a.behavior.avg_message_length);
-        $('#autolife_catchup').prop('checked', !!a.behavior.catch_up);
-        $('#autolife_init_on').prop('checked', !!a.initiative.enabled);
-        $('#autolife_init_gap').val(a.initiative.min_gap_minutes);
-        $('#autolife_init_max').val(a.initiative.max_per_day);
-        $('#autolife_followup').val(a.initiative.followup_on_unread_hours);
-        $('#autolife_rel').val(a.relationship.initial);
-        $('#autolife_journal').prop('checked', !!a.journal.enabled);
-        $('#autolife_mem_on').prop('checked', a.memory?.enabled ?? true);
-        $('#autolife_mem_k').val(a.memory?.retrieve_count ?? 3);
-        $('#autolife_mem_max').val(a.memory?.max_entries ?? 4000);
-        $('#autolife_sched_rows').html((a.schedule.length ? a.schedule : []).map(schedRowHtml).join(''));
+        const has = !!card.autolife;
+        $('#autolife_enable').prop('checked', has);
+        const status = state.charStatus.get(name);
+        $('#autolife_char_status').text(has
+            ? (status ? `${status.activity} · ${Math.round(status.availability * 100)}%` : 'enabled')
+            : 'no autolife block');
     } catch {
         $('#autolife_enable').prop('checked', false);
-        $('#autolife_editor').hide();
+        $('#autolife_char_status').text('');
     }
 }
 
@@ -435,7 +551,9 @@ function buildAutolifeFromForm() {
             max_per_day: Number($('#autolife_init_max').val()),
             followup_on_unread_hours: Number($('#autolife_followup').val()),
         },
-        relationship: { initial: Number($('#autolife_rel').val()) },
+        // runtime relationship is edited live in the panel; preserve the card's
+        // initial for future purges rather than clobbering it from the form
+        relationship: { initial: panelInitialRelationship },
         journal: { enabled: $('#autolife_journal').prop('checked') },
         memory: {
             enabled: $('#autolife_mem_on').prop('checked'),
@@ -446,11 +564,10 @@ function buildAutolifeFromForm() {
 }
 
 async function saveCard() {
-    const name = currentCharacterName();
-    if (!name) return;
+    if (!panelChar) return;
     const msg = $('#autolife_save_msg').text('saving…');
     try {
-        const res = await api('/card', 'POST', { name, autolife: buildAutolifeFromForm() });
+        const res = await api('/card', 'POST', { name: panelChar, autolife: buildAutolifeFromForm() });
         msg.text(`saved ✓${res.warnings?.length ? ` (${res.warnings.length} warning${res.warnings.length > 1 ? 's' : ''})` : ''}`);
         refreshStatus();
     } catch (err) {
@@ -609,7 +726,7 @@ function applyCharacterChips() {
         const chip = chipFor(status);
         const $name = $el.find('.ch_name');
         if ($name.length && chip) {
-            $name.append(` <span class="autolife-chip autolife-chip-${chip.cls}" title="${status.activity} · ${status.localTime}">${chip.icon}</span>`);
+            $name.append(` <span class="autolife-chip autolife-chip-${chip.cls}" data-name="${character.name}" title="${status.activity} · ${status.localTime} — click for the Autolife panel">${chip.icon}</span>`);
         }
     });
 }
@@ -764,6 +881,7 @@ function connectEvents() {
             case 'bindings_changed':
             case 'card_updated':
                 refreshStatus();
+                if (panelChar) refreshPanel();
                 if (data.type === 'bindings_changed') loadTelegramSection();
                 if (data.type === 'card_updated' && currentCharacterName() === data.character) loadCharacterEditor();
                 break;
@@ -796,24 +914,71 @@ function wireEvents() {
 
     $('#autolife_enable').on('change', (ev) => {
         const on = ev.target.checked;
-        $('#autolife_editor').toggle(on);
-        if (!on) {
-            const name = currentCharacterName();
-            api('/enable', 'POST', { name, enabled: false }).then(refreshStatus).catch((e) => toast(`disable failed: ${e.message}`));
-        }
+        const name = currentCharacterName();
+        if (!name) return;
+        api('/enable', 'POST', { name, enabled: on })
+            .then(() => { refreshStatus(); loadCharacterEditor(); })
+            .catch((e) => toast(`${on ? 'enable' : 'disable'} failed: ${e.message}`));
     });
 
     $('#autolife_save').on('click', saveCard);
 
-    $('#autolife_force').on('click', async () => {
-        const name = currentCharacterName();
-        if (!name) return;
-        toast(`Asking ${name} to text you now…`);
-        try {
-            await api('/trigger', 'POST', { name, kind: 'initiative' });
-        } catch (e) {
-            toast(`failed: ${e.message}`);
-        }
+    // --- dedicated panel ---
+    $('#autolife_open_panel').on('click', () => openCharacterPanel(currentCharacterName()));
+    $('#autolife_panel_close').on('click', closeCharacterPanel);
+    $('#autolife_panel_overlay').on('click', (ev) => {
+        if (ev.target.id === 'autolife_panel_overlay') closeCharacterPanel();
+    });
+    $('#autolife_panel_add').on('click', async () => {
+        if (!panelChar) return;
+        await api('/card', 'POST', { name: panelChar, autolife: { version: '1.1' } })
+            .then(() => { toast(`Autolife added to ${panelChar} — enabled with defaults`); refreshPanel(); refreshStatus(); loadCharacterEditor(); })
+            .catch((e) => toast(e.message));
+    });
+    $('#autolife_panel_force').on('click', () => {
+        if (!panelChar) return;
+        toast(`Asking ${panelChar} to text you now…`);
+        api('/trigger', 'POST', { name: panelChar, kind: 'initiative' })
+            .then(() => setTimeout(refreshPanel, 1500))
+            .catch((e) => toast(e.message));
+    });
+    $('#autolife_panel_pause').on('click', async () => {
+        const c = state.charStatus.get(panelChar);
+        const paused = c ? !c.paused : true;
+        await api('/pause', 'POST', { name: panelChar, paused }).catch((e) => toast(e.message));
+        refreshStatus();
+        refreshPanel();
+    });
+    $('#autolife_panel_stop').on('click', async () => {
+        const c = state.charStatus.get(panelChar);
+        const enabled = c ? !c.enabled : true;
+        await api('/enable', 'POST', { name: panelChar, enabled }).catch((e) => toast(e.message));
+        refreshStatus();
+        refreshPanel();
+        loadCharacterEditor();
+    });
+    $('#autolife_panel_purge').on('click', async () => {
+        if (!panelChar) return;
+        if (!window.confirm(`Purge ${panelChar}'s runtime state?\n\nThis wipes the relationship score, journal, pending replies and the entire memory index. Chats and the character card are kept. This cannot be undone.`)) return;
+        if (!window.confirm(`Really purge ${panelChar}? They start over from the card defaults.`)) return;
+        await api('/purge', 'POST', { name: panelChar })
+            .then(() => { toast(`${panelChar} purged — starting fresh`); refreshPanel(); refreshStatus(); })
+            .catch((e) => toast(e.message));
+    });
+    $('#autolife_panel_rel_save').on('click', async () => {
+        const score = Number($('#autolife_panel_rel_now').val());
+        await api('/relationship', 'POST', { name: panelChar, score })
+            .then(() => { toast('Relationship updated'); refreshPanel(); refreshStatus(); })
+            .catch((e) => toast(e.message));
+    });
+    $('#autolife_panel_journal_refresh').on('click', refreshPanel);
+
+    // --- chips open the dedicated panel without selecting the character ---
+    $(document).on('click', '.autolife-chip', (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        const name = $(ev.currentTarget).data('name');
+        if (name) openCharacterPanel(name);
     });
 
     // --- monitor buttons ---
@@ -968,6 +1133,9 @@ jQuery(() => {
 
         // dashboard panel in the extensions drawer
         $('#extensions_settings2').append(panelHtml());
+
+        // dedicated per-character panel modal (our own DOM — immune to ST changes)
+        $('body').append(panelModalHtml());
         $('#autolife_sched_head').html(schedHeadHtml());
 
         // character config: editor form + Advanced Definitions popup (self-healing)

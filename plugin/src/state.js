@@ -131,6 +131,13 @@ export class StateStore {
         this._writeJson(`state/${safeName(state.character)}.json`, state);
     }
 
+    /** Hard-reset a character's runtime state (purge). */
+    purgeState(character) {
+        try {
+            fs.rmSync(path.join(this.stateDir, `${safeName(character)}.json`));
+        } catch { /* nothing to remove */ }
+    }
+
     /** Telegram chat bindings: chatId -> { character, chatFile } */
     loadBindings() {
         return this._readJson('bindings.json', {});

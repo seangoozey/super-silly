@@ -310,6 +310,36 @@ export function registerRoutes(router, deps) {
         res.json({ ok: true });
     }));
 
+    // ---- per-character panel: relationship + purge ----
+    router.post('/relationship', wrap(async (req, res) => {
+        const body = await readBody(req);
+        const entry = cards.find(String(body.name ?? ''));
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${body.name}".` });
+        const score = Number(body.score);
+        if (!Number.isFinite(score) || score < 0 || score > 100) {
+            return res.status(400).json({ error: 'score must be a number between 0 and 100.' });
+        }
+        const state = store.loadState(entry.name, { initialRelationship: entry.autolife?.relationship?.initial ?? 20 });
+        const before = Math.round(state.relationship);
+        state.relationship = score;
+        store.saveState(state);
+        audit(entry.name, 'state_changed', `relationship set manually: ${before} -> ${Math.round(score)}`);
+        broadcast('state_changed', { character: entry.name });
+        res.json({ ok: true, relationship: Math.round(score) });
+    }));
+
+    router.post('/purge', wrap(async (req, res) => {
+        const body = await readBody(req);
+        const entry = cards.find(String(body.name ?? ''));
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${body.name}".` });
+        memory.rebuild(entry.name);
+        store.purgeState(entry.name);
+        audit(entry.name, 'purged', 'runtime state purged — relationship, journal, pending replies and the memory index were wiped (chats and card kept); state recreated with card defaults');
+        broadcast('state_changed', { character: entry.name });
+        log(`purged runtime state for "${entry.name}"`);
+        res.json({ ok: true });
+    }));
+
     // ---- schedule preview (used by the panel's grid editor) ----
     router.get('/schedule/preview', wrap(async (req, res) => {
         const name = String(req.query?.name ?? '');

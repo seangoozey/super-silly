@@ -217,3 +217,52 @@
 }
 
 .autolife-chip-paused { opacity: 0.5; }
+
+.autolife-chip {
+    cursor: pointer;
+}
+
+/* ---- dedicated per-character panel ---- */
+
+.autolife-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99998;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.autolife-modal {
+    background: var(--SmartThemeBlurTintColor, #1b1b1e);
+    color: var(--SmartThemeBodyColor, #ddd);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 10px;
+    width: min(760px, 94vw);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+
+.autolife-modal-head {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #555);
+}
+
+.autolife-modal-head .autolife-btn {
+    margin-left: auto;
+}
+
+.autolife-modal-body {
+    padding: 8px 14px 14px;
+    overflow-y: auto;
+}
+
+.autolife-danger {
+    color: #e57368;
+}

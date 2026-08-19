@@ -619,6 +619,7 @@ export class Engine {
                 localTime: `${life.local.weekdayName} ${life.local.hhmm} (${entry.autolife.timezone})`,
                 paused: !!state.paused,
                 enabled: !!state.enabled,
+                journal: state.journal ?? [],
                 pendingReply: state.pendingReply ?? null,
                 ignoredAt: state.ignoredAt ?? null,
                 relationship: state.relationship,
