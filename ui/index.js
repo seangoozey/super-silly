@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.3.2';
+const EXT_VERSION = '0.3.3';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -36,10 +36,20 @@ async function api(path, method = 'GET', body = null) {
 }
 
 function currentCharacterName() {
-    if (ST?.characterId >= 0 && ST.characters?.[ST.characterId]?.name) {
-        return ST.characters[ST.characterId].name;
-    }
-    return ST?.name2 ?? null;
+    // When the editor (or its Advanced Definitions popup) is open, the name
+    // pole holds the character being edited — in those states ST's context
+    // vars can point at the hidden "SillyTavern System" character instead.
+    const poleVisible = $('#character_popup').is(':visible') || $('#rm_ch_create_block').is(':visible');
+    const pole = String($('#character_name_pole').val() ?? '').trim();
+    if (poleVisible && pole) return pole;
+    // Otherwise resolve from chat context, but only accept names that map to
+    // a real character card (rejects the hidden system character).
+    const isCard = (n) => Boolean(n) && Boolean(ST?.characters?.some((c) => c?.name === n));
+    const n2 = String(ST?.name2 ?? '').trim();
+    if (isCard(n2)) return n2;
+    const byId = ST?.characterId >= 0 ? ST.characters?.[ST.characterId]?.name : null;
+    if (isCard(byId)) return byId;
+    return null;
 }
 
 // ---------------------------------------------------------------- generation interceptor
@@ -935,7 +945,9 @@ function startEditorWatchdog() {
         if (popupOpen !== wasPopupOpen) {
             wasPopupOpen = popupOpen;
             const name = currentCharacterName();
-            if (name && (lastEditorLoad.name !== name || Date.now() - lastEditorLoad.ts > 30_000)) {
+            // reload only when a DIFFERENT character is being edited — never
+            // clobber unsaved form state for the same character
+            if (name && lastEditorLoad.name !== name) {
                 loadCharacterEditor();
             }
         }
