@@ -76,11 +76,15 @@ export class Engine {
 
     /**
      * Boot policy: characters start stopped when the server starts, so a
-     * container rebuild never wakes everyone up unattended.
+     * container rebuild never wakes everyone up unattended. Precedence:
+     * AUTOLIFE_START_STOPPED env (deployment decision) > engine settings
+     * (panel/runtime) > default true.
      * @returns {number} how many characters were stopped
      */
     applyBootPolicy() {
-        if (this.settings.engine?.start_stopped === false) return 0;
+        const env = process.env.AUTOLIFE_START_STOPPED;
+        const startStopped = env === 'false' ? false : env === 'true' ? true : this.settings.engine?.start_stopped !== false;
+        if (!startStopped) return 0;
         let stopped = 0;
         for (const entry of this.cards.autolifeCharacters()) {
             const state = this.#state(entry);
@@ -92,7 +96,7 @@ export class Engine {
         }
         if (stopped) {
             this.#audit(null, 'state_changed', `server started — ${stopped} character${stopped > 1 ? 's' : ''} set to stopped (start them from the Autolife panel or /start in Telegram)`);
-            this.log(`${stopped} character(s) start stopped per engine.start_stopped policy`);
+            this.log(`${stopped} character(s) start stopped per boot policy`);
         }
         return stopped;
     }

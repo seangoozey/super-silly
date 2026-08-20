@@ -348,6 +348,27 @@ test('bindings are scoped per bot with legacy flat migration', async () => {
     assert.equal(all['maya:222'].bot, 'maya');
 });
 
+test('AUTOLIFE_START_STOPPED env overrides the boot policy', async () => {
+    const card = characterCard('Envira');
+    const h = buildHarness({ card });
+    let state = stateOf(h.store, 'Envira');
+    state.enabled = true;
+    h.store.saveState(state);
+
+    process.env.AUTOLIFE_START_STOPPED = 'false';
+    try {
+        assert.equal(h.engine.applyBootPolicy(), 0, 'env false keeps characters running');
+        assert.equal(stateOf(h.store, 'Envira').enabled, true);
+
+        process.env.AUTOLIFE_START_STOPPED = 'true';
+        h.engine.settings.engine.start_stopped = false; // even with the setting off
+        assert.equal(h.engine.applyBootPolicy(), 1, 'env true forces stop');
+        assert.equal(stateOf(h.store, 'Envira').enabled, false);
+    } finally {
+        delete process.env.AUTOLIFE_START_STOPPED;
+    }
+});
+
 test('status() summarizes life state', async () => {
     const card = characterCard('Sasha');
     const h = buildHarness({ card });
