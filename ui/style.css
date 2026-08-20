@@ -239,6 +239,12 @@
     opacity: 1;
 }
 
+.autolife-active-chat {
+    color: var(--green, #4caf50);
+    font-weight: bold;
+    cursor: help;
+}
+
 .autolife-reload-banner {
     position: fixed;
     top: 12px;

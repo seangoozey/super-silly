@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.11';
+const EXT_VERSION = '0.4.12';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -59,10 +59,12 @@ function currentCharacterName() {
     const poleVisible = $('#character_popup').is(':visible') || $('#rm_ch_create_block').is(':visible');
     const pole = String($('#character_name_pole').val() ?? '').trim();
     if (poleVisible && pole) return pole;
-    // Otherwise resolve from chat context, but only accept names that map to
-    // a real character card (rejects the hidden system character).
-    const isCard = (n) => Boolean(n) && Boolean(ST?.characters?.some((c) => c?.name === n));
+    // Otherwise resolve from chat context. Try the name directly against our
+    // status map first (works in chat view regardless of cards-array quirks),
+    // then accept any name that maps to a real character card.
     const n2 = String(ST?.name2 ?? '').trim();
+    if (n2 && state.charStatus.has(n2)) return n2;
+    const isCard = (n) => Boolean(n) && Boolean(ST?.characters?.some((c) => c?.name === n));
     if (isCard(n2)) return n2;
     const byId = ST?.characterId >= 0 ? ST.characters?.[ST.characterId]?.name : null;
     if (isCard(byId)) return byId;
@@ -634,11 +636,17 @@ function chatStripHtml() {
         <span class="autolife-avail-bar autolife-strip-bar"><div></div></span>
         <span class="autolife-strip-time autolife-muted"></span>
         <span class="autolife-strip-init autolife-muted"></span>
+        <span class="autolife-strip-chat autolife-muted"></span>
     </div>`;
 }
 
 function updateChatStrip() {
-    const $strip = $('#autolife_chat_strip');
+    let $strip = $('#autolife_chat_strip');
+    if (!$strip.length && $('#chat').length) {
+        // self-heal: ST DOM churn should never lose the strip
+        $('#chat').before(chatStripHtml());
+        $strip = $('#autolife_chat_strip');
+    }
     if (!$strip.length) return;
     const name = currentCharacterName();
     const status = name ? state.charStatus.get(name) : null;
@@ -656,6 +664,38 @@ function updateChatStrip() {
     $strip.find('.autolife-strip-time').text(status.localTime);
     const init = status.initiative ?? {};
     $strip.find('.autolife-strip-init').text(!status.enabled ? '' : (!init.enabled ? 'initiative off' : (init.blockedReason ? `next text: ${init.blockedReason}` : 'may text you any moment')));
+    $strip.find('.autolife-strip-chat').text(status.chatFile ? `chat: ${String(status.chatFile).replace(/\.jsonl$/, '')}` : '');
+}
+
+/**
+ * Mark the engine's ACTIVE chat in SillyTavern's past-chats popup so the
+ * right conversation is identifiable among the recents.
+ */
+function markActiveChats() {
+    const $div = $('#select_chat_div');
+    if (!$div.length) return;
+    const name = currentCharacterName();
+    const status = name ? state.charStatus.get(name) : null;
+    const activeFile = status?.chatFile ? String(status.chatFile).replace(/\.jsonl$/, '') : null;
+    $div.find('.select_chat_block').each((_, el) => {
+        const $el = $(el);
+        $el.find('.autolife-active-chat').remove();
+        const file = String($el.attr('file_name') ?? '').replace(/\.jsonl$/, '');
+        if (activeFile && file === activeFile) {
+            $el.find('.chat_date').last().append(' <span class="autolife-active-chat" title="Autolife active chat — engine messages land in this conversation">● Autolife</span>');
+        }
+    });
+}
+
+function watchPastChatsPopup() {
+    const target = document.getElementById('select_chat_div');
+    if (!target) return;
+    let timer = null;
+    const reapply = () => {
+        clearTimeout(timer);
+        timer = setTimeout(markActiveChats, 200);
+    };
+    new MutationObserver(reapply).observe(target, { childList: true, subtree: true });
 }
 
 function ensureTypingBubble() {
@@ -1205,14 +1245,16 @@ function wireEvents() {
 }
 
 // user messages from the web UI -> engine (decides delay/ignore/…)
-function onUserMessage() {
+function onUserMessage(messageId) {
     const name = currentCharacterName();
-    if (!name || !state.enabled.has(name)) return;
+    // post for ANY autolife character (stopped/paused too) — the engine
+    // audits and mirrors those instead of dropping them silently
+    if (!name || !state.charStatus.has(name)) return;
     const chat = ST.chat ?? [];
-    const last = chat[chat.length - 1];
-    if (!last?.is_user) return;
+    const message = Number.isInteger(messageId) ? chat[messageId] : chat[chat.length - 1];
+    if (!message?.is_user) return;
     updateTypingBubble();
-    api('/inbound', 'POST', { character: name, mes: String(last.mes ?? '') }).then(() => refreshStatus()).catch(() => {});
+    api('/inbound', 'POST', { character: name, mes: String(message.mes ?? '') }).then(() => refreshStatus()).catch(() => {});
 }
 
 // ---------------------------------------------------------------- bootstrap
@@ -1297,6 +1339,7 @@ jQuery(() => {
             loadMemorySection();
             loadCharacterEditor();
             watchCharacterList();
+            watchPastChatsPopup();
             setInterval(refreshStatus, 30_000);
             setInterval(loadAudit, 120_000);
             setInterval(() => { updateChatStrip(); updateTypingBubble(); }, 15_000);
@@ -1314,7 +1357,7 @@ jQuery(() => {
                 api('/chat-file', 'POST', { name, chatFile: String(chatId) }).catch(() => {});
             }
         });
-        ST.eventSource.on(ST.event_types.MESSAGE_SENT, onUserMessage);
+        ST.eventSource.on(ST.event_types.MESSAGE_SENT, (messageId) => onUserMessage(Number.isInteger(messageId) ? messageId : undefined));
         ST.eventSource.on(ST.event_types.MESSAGE_RECEIVED, () => removeTypingBubble());
         ST.eventSource.on(ST.event_types.CHARACTER_MESSAGE_RENDERED, (idx) => {
             try { annotateMessage(typeof idx === 'number' ? idx : Number(idx?.messageId ?? idx)); } catch { /* noop */ }
