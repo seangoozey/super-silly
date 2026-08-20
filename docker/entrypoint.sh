@@ -58,19 +58,25 @@ try {
 ) &
 
 # ---------- 2. ollama ----------
-log "starting ollama"
-ollama serve &
-OLLAMA_PID=$!
+log "starting ollama (supervised)"
+# Watchdog keeps ollama alive for the container's lifetime — on an unattended
+# server a wedged/killed ollama must restart itself or the whole system goes
+# quietly dark (engine retries fail into backoff, characters go silent).
+(
+    while true; do
+        ollama serve &
+        OLLAMA_PID=$!
+        wait "$OLLAMA_PID"
+        echo "[supersilly] ollama exited (code $?) — restarting in 5s"
+        sleep 5
+    done
+) &
 
 log "waiting for ollama on :11434"
 for i in $(seq 1 90); do
     if curl -sf http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
         log "ollama is up ($(curl -sf http://127.0.0.1:11434/api/version 2>/dev/null || true))"
         break
-    fi
-    if ! kill -0 "$OLLAMA_PID" 2>/dev/null; then
-        log "FATAL: ollama died during startup — check the logs above"
-        exit 1
     fi
     sleep 2
 done

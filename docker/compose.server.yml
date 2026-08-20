@@ -1,0 +1,43 @@
+# Server deployment (TrueNAS / any Linux host with nvidia-container-toolkit).
+#
+# Differences from docker-compose.yml:
+#   - bind mounts onto a ZFS dataset (snapshots/backups for free) instead of
+#     named volumes — set the base dir via env or .env:
+#         SUPERSILLY_BASE=/mnt/tank/apps/supersilly
+#   - GPU enabled (Tesla P40 needs host driver branch 550+, the last Pascal one)
+#   - docker log rotation (unattended hosts grow json logs forever otherwise)
+#
+#   docker compose --env-file .env -f docker/compose.server.yml up -d --build
+#
+services:
+  supersilly:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: supersilly:latest
+    container_name: supersilly
+    ports:
+      - "${SUPERSILLY_PORT:-8000}:8000"
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M}
+      OLLAMA_FALLBACK_MODEL: ${OLLAMA_FALLBACK_MODEL:-hf.co/ReadyArt/Dark-Desires-12B-v1.0-GGUF:Q4_K_M}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+    volumes:
+      - ${SUPERSILLY_BASE:-./server-data}/config:/home/node/app/config
+      - ${SUPERSILLY_BASE:-./server-data}/data:/home/node/app/data
+      - ${SUPERSILLY_BASE:-./server-data}/ollama:/root/.ollama
+    gpus: all
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/api/plugins/autolife/status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s

@@ -86,10 +86,50 @@ Editing a character's life: open it in SillyTavern → Extensions drawer → **A
 
 ## Deploying to TrueNAS (Tesla P40)
 
+Use the server compose file — bind mounts onto a ZFS dataset (snapshot-friendly), GPU on, log rotation:
+
+```bash
+# on the server
+mkdir -p /mnt/tank/apps/supersilly/{config,data,ollama}   # your dataset path
+cd super-silly
+SUPERSILLY_BASE=/mnt/tank/apps/supersilly docker compose -f docker/compose.server.yml up -d --build
+```
+
+**Migrating your dev data** (chats, memory indexes, relationships, journals, Telegram bindings, persona, model settings — everything lives in the volumes):
+
+```bash
+# on the dev machine: export the three volumes
+for v in $(docker volume ls --format '{{.Name}}' | grep supersilly); do
+  docker run --rm -v "$v":/data -v "$(pwd)":/backup alpine \
+    tar czf "/backup/${v##*_}.tar.gz" -C /data .
+done
+# copy *.tar.gz to the server, then for each (config|data|ollama):
+tar xzf data.tar.gz -C /mnt/tank/apps/supersilly/data
+```
+
+Restoring the `ollama` volume moves the downloaded models too — the server skips the multi-GB pull. The first-boot seeding (examples, UI extension, connection pre-config) only fills EMPTY volumes, so restored data is never overwritten.
+
+**First-boot checklist on the server:**
+
+1. GPU actually engaged: `docker exec supersilly ollama ps` after any generation → `100% GPU`. If it says CPU, check the host NVIDIA driver (P40 needs branch 550+, the last Pascal-supporting one) and `nvidia-container-toolkit`.
+2. Everyone comes up **stopped** (boot policy). For an unattended server you probably want them to survive restarts: set `engine.start_stopped: false` (see below) — otherwise every TrueNAS update pauses all characters until you start them.
+3. Audit log shows heartbeats; send a Telegram message to confirm bindings survived the move.
+4. Security: the seed config is LAN-open (listen, no auth). Fine on a trusted segment; if the box is reachable past your LAN, enable `basicAuthMode` in `/mnt/tank/apps/supersilly/config/config.yaml` and restart.
+
+Changing engine settings without the panel (server-side):
+
+```bash
+docker exec supersilly node -e "
+const fs=require('fs');
+const p='/home/node/app/data/default-user/autolife/settings.json';
+const s=JSON.parse(fs.readFileSync(p,'utf8'));
+s.engine.start_stopped=false;
+fs.writeFileSync(p,JSON.stringify(s,null,4));
+console.log('start_stopped:',s.engine.start_stopped);
+" && docker restart supersilly
+```
+
 - TrueNAS SCALE (Electric Eel+) ships NVIDIA driver branch 550 — the **last branch supporting Pascal**. If a future update moves past it, pin the driver before upgrading.
-- Use **Apps → Discover → Custom App** (or the host's docker compose) with the GPU assigned to the container; the P40 (compute 6.1) is supported by Ollama but has no tensor cores — expect modest token rates on the 27B (~17 GB Q4_K_M fits with context headroom; keep `ollama.keepAlive: -1`, already set in the seed config, so the model stays loaded).
-- Mount persistent storage for `/home/node/app/config`, `/home/node/app/data`, `/root/.ollama`.
-- Verify GPU visibility inside the container: `docker exec supersilly ollama ps` should show 100% GPU after a generation.
 
 ## Security notes
 
