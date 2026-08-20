@@ -14,6 +14,12 @@ const progressBar = (pct) => {
 
 export function createCommandRegistry(ctx) {
     const { engine, cards, store, chatStore, log } = ctx;
+    // Bindings are per-bot: the transport provides its own scoped load/save so
+    // /switch, /audit etc. operate on the bot that received the command.
+    const bindingsApi = {
+        load: () => (ctx.transport ? ctx.transport.myBindings() : store.loadBindings()),
+        save: (b) => (ctx.transport ? ctx.transport.saveMyBindings(b) : store.saveBindings('default', b)),
+    };
     const charactersDir = cards.dir;
 
     // The transport is created after this registry (they reference each other);
@@ -33,7 +39,7 @@ export function createCommandRegistry(ctx) {
         commands.set(cmd.name, cmd);
     }
 
-    const bindingFor = (chatId) => store.loadBindings()[String(chatId)] ?? null;
+    const bindingFor = (chatId) => bindingsApi.load()[String(chatId)] ?? null;
 
     const characterSummary = (entry) => {
         const status = engine.status().characters.find((c) => c.name === entry.name);
@@ -303,7 +309,7 @@ export function createCommandRegistry(ctx) {
         name: 'audit',
         help: 'engine decision notifications: /audit [on|off]',
         run: async (chatId, args) => {
-            const bindings = store.loadBindings();
+            const bindings = bindingsApi.load();
             const key = String(chatId);
             const binding = bindings[key];
             if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
@@ -311,7 +317,7 @@ export function createCommandRegistry(ctx) {
             if (sub === 'on' || sub === 'off') {
                 binding.audit = sub === 'on';
                 bindings[key] = binding;
-                store.saveBindings(bindings);
+                bindingsApi.save(bindings);
                 return transport.send(chatId,
                     `Audit notifications ${binding.audit ? 'ON' : 'OFF'} for ${binding.character}. `
                     + (binding.audit

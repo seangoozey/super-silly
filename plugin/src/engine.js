@@ -645,8 +645,7 @@ export class Engine {
 
     status() {
         const now = this.nowFn();
-        const bindings = this.store.loadBindings();
-        const boundChats = Object.entries(bindings).filter(([, b]) => b?.character).map(([, b]) => b.character);
+        const boundChats = Object.values(this.store.allBindings()).filter((b) => b?.character).map((b) => b.character);
         const characters = this.cards.autolifeCharacters().map((entry) => {
             const state = this.#state(entry);
             const life = evaluate(entry.autolife, now);

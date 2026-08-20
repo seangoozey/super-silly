@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.4.12';
+const EXT_VERSION = '0.5.0';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -136,17 +136,19 @@ function panelHtml() {
                 <div class="autolife-section">
                     <h4>Telegram</h4>
                     <div class="autolife-form-grid">
-                        <label>Bot token</label>
+                        <label>Bot token (shared/default)</label>
                         <input type="password" id="autolife_tg_token" placeholder="123456:ABC… (from @BotFather)">
                         <label>Allowed chat IDs</label>
                         <input type="text" id="autolife_tg_ids" placeholder="comma separated, e.g. 12345678">
+                        <label>Extra bots (one per line)</label>
+                        <textarea id="autolife_tg_bots" rows="2" placeholder="maya | 123:token | 12345678" style="width:100%;"></textarea>
                     </div>
                     <div style="margin-top:6px;">
                         <button type="button" class="menu_button autolife-btn" id="autolife_tg_save">Save & restart bridge</button>
                         <span id="autolife_tg_msg" class="autolife-muted"></span>
                     </div>
                     <div id="autolife_bindings" class="autolife-status-line"></div>
-                    <div class="autolife-muted">In Telegram: /chars, /switch &lt;name&gt;, /status, /model, /upload a card file. Get your chat ID by messaging the bot once and checking the server log.</div>
+                    <div class="autolife-muted">One bot = one chat with one character at a time (/switch changes it). For full separation give a character its own bot: add it above, message it in Telegram, /switch there — bindings are per-bot, so characters never share chats. Commands: /chars, /switch, /status, /start, /stop, /model, /upload.</div>
                 </div>
 
                 <div class="autolife-section">
@@ -917,10 +919,15 @@ async function loadTelegramSection() {
         $('#autolife_persona_name').val(settings.persona?.name ?? '');
         $('#autolife_tg_token').attr('placeholder', settings.telegram?.hasToken ? settings.telegram.token : '123456:ABC… (from @BotFather)');
         $('#autolife_tg_ids').val((settings.telegram?.allowed_chat_ids ?? []).join(', '));
+        $('#autolife_tg_bots').val((settings.telegram?.bots ?? [])
+            .map((b) => `${b.name} | ${b.token} | ${(b.allowed_chat_ids ?? []).join(',')}`)
+            .join('\n'));
         const { bindings } = await api('/bindings');
-        const rows = Object.entries(bindings).map(([chatId, b]) =>
-            `<tr><td>${chatId}</td><td>${b?.character ?? '?'}</td><td><a class="autolife-btn" data-unbind="${chatId}" title="unbind"><i class="fa-solid fa-link-slash"></i></a></td></tr>`);
-        $('#autolife_bindings').html(rows.length ? `Bindings: <table>${rows.join('')}</table>` : 'No Telegram chats bound yet.');
+        const rows = Object.entries(bindings).map(([, b]) =>
+            `<tr><td>${b.bot ?? 'default'}</td><td>${b.chatId ?? ''}</td><td>${b?.character ?? '?'}</td><td><a class="autolife-btn" data-unbind="${b.chatId}" data-unbind-bot="${b.bot ?? 'default'}" title="unbind"><i class="fa-solid fa-link-slash"></i></a></td></tr>`);
+        $('#autolife_bindings').html(rows.length
+            ? `Bindings: <table>${rows.join('')}</table>`
+            : 'No Telegram chats bound yet — message a bot, then /switch <name> in that chat.');
     } catch { /* plugin offline; status line already shows it */ }
 }
 
@@ -1167,7 +1174,8 @@ function wireEvents() {
     });
 
     $(document).on('click', '[data-unbind]', (ev) => {
-        api('/bindings/delete', 'POST', { chatId: String($(ev.currentTarget).data('unbind')) })
+        const $el = $(ev.currentTarget);
+        api('/bindings/delete', 'POST', { chatId: String($el.data('unbind')), bot: String($el.data('unbind-bot') ?? 'default') })
             .then(loadTelegramSection).catch((e) => toast(e.message));
     });
 
@@ -1204,9 +1212,15 @@ function wireEvents() {
     $('#autolife_tg_save').on('click', async () => {
         const token = $('#autolife_tg_token').val().trim();
         const ids = $('#autolife_tg_ids').val().split(/[,\s]+/).map((s) => Number(s.trim())).filter(Number.isFinite);
+        const bots = $('#autolife_tg_bots').val().split('\n').map((line) => line.trim()).filter(Boolean)
+            .map((line) => {
+                const [name, botToken, botIds] = line.split('|').map((p) => (p ?? '').trim());
+                return { name, token: botToken, allowed_chat_ids: botIds.split(/[,\s]+/).map(Number).filter(Number.isFinite) };
+            })
+            .filter((b) => b.token);
         const msg = $('#autolife_tg_msg').text('saving…');
         try {
-            await api('/settings', 'POST', { telegram: { token: token || undefined, allowed_chat_ids: ids, restart: true } });
+            await api('/settings', 'POST', { telegram: { token: token || undefined, allowed_chat_ids: ids, bots, restart: true } });
             msg.text('saved ✓ — bridge restarting');
             $('#autolife_tg_token').val('');
             loadTelegramSection();

@@ -90,48 +90,68 @@ function addSseClient(res) {
 const engine = new Engine({ cards, store, chatStore, ollama, memory, log, emit: broadcast });
 engine.transports = [];
 
-// commands need the transport (to reply) and the transport needs the commands
-// (to dispatch) — break the cycle with a late-bound holder.
-const live = { transport: null };
-const commandCtx = new Proxy({ engine, cards, store, chatStore, memory, log }, {
-    get(target, prop) {
-        if (prop === 'transport') return live.transport;
-        return target[prop];
-    },
-});
-const commands = createCommandRegistry(commandCtx);
+// One transport per configured bot (the shared "default" bot plus any extra
+// per-character bots from settings.telegram.bots). Commands are bound late to
+// their own bot's transport, so /switch etc. operate on the bot that received
+// them and each bot's chat bindings stay fully separated.
+const live = { transports: [] };
 
-// routes only need "is telegram on" — expose it dynamically
+function makeCommandCtx() {
+    const holder = { transport: null };
+    return {
+        ctx: new Proxy({ engine, cards, store, chatStore, memory, log }, {
+            get(target, prop) {
+                if (prop === 'transport') return holder.transport;
+                return target[prop];
+            },
+        }),
+        holder,
+    };
+}
+
 const transportView = {
     get enabled() {
-        return !!live.transport?.enabled;
+        return live.transports.some((t) => t.enabled);
+    },
+    get count() {
+        return live.transports.filter((t) => t.enabled).length;
     },
 };
 
 function startTransport() {
     stopTransport();
     const settings = store.loadSettings();
-    const transport = new TelegramTransport({
-        token: settings.telegram?.token,
-        allowedChatIds: settings.telegram?.allowed_chat_ids ?? [],
-        store,
-        engine,
-        cards,
-        chatStore,
-        commands,
-        log,
-        emit: broadcast,
+    const botDefs = [
+        { name: 'default', token: settings.telegram?.token, allowed: settings.telegram?.allowed_chat_ids ?? [] },
+        ...(settings.telegram?.bots ?? []).map((b) => ({ name: String(b.name ?? 'bot'), token: b.token, allowed: b.allowed_chat_ids ?? [] })),
+    ];
+    live.transports = botDefs.filter((d) => d.token).map((def) => {
+        const { ctx, holder } = makeCommandCtx();
+        const commands = createCommandRegistry(ctx);
+        const transport = new TelegramTransport({
+            token: def.token,
+            allowedChatIds: def.allowed,
+            store,
+            engine,
+            cards,
+            chatStore,
+            commands,
+            log,
+            emit: broadcast,
+            botName: def.name,
+        });
+        holder.transport = transport;
+        return transport;
     });
-    live.transport = transport;
-    engine.transports = [transport];
-    transport.start();
+    engine.transports = live.transports;
+    for (const t of live.transports) t.start();
+    const names = live.transports.map((t) => t.botName).join(', ');
+    log(`telegram bots running: ${live.transports.length} (${names})`);
 }
 
 function stopTransport() {
-    if (live.transport) {
-        live.transport.stop();
-        live.transport = null;
-    }
+    for (const t of live.transports) t.stop();
+    live.transports = [];
     engine.transports = [];
 }
 

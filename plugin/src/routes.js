@@ -225,6 +225,17 @@ export function registerRoutes(router, deps) {
             if (Array.isArray(body.telegram.allowed_chat_ids)) {
                 settings.telegram.allowed_chat_ids = body.telegram.allowed_chat_ids.map(Number).filter(Number.isFinite);
             }
+            // extra per-character bots: [{ name, token, allowed_chat_ids }]
+            if (Array.isArray(body.telegram.bots)) {
+                settings.telegram.bots = body.telegram.bots
+                    .filter((b) => b && typeof b.token === 'string' && b.token.trim())
+                    .map((b) => ({
+                        name: String(b.name ?? 'bot').replace(/[^a-z0-9_-]/gi, '_').slice(0, 24) || 'bot',
+                        token: b.token.trim(),
+                        allowed_chat_ids: Array.isArray(b.allowed_chat_ids) ? b.allowed_chat_ids.map(Number).filter(Number.isFinite) : [],
+                    }));
+                audit(null, 'model', `telegram bots configured: ${settings.telegram.bots.length + 1} (incl. default)`);
+            }
         }
         store.saveSettings(settings);
         engine.refreshSettings();
@@ -238,16 +249,19 @@ export function registerRoutes(router, deps) {
 
     // ---- bindings ----
     router.get('/bindings', wrap(async (req, res) => {
-        res.json({ bindings: store.loadBindings() });
+        // merged across bots: "<bot>:<chatId>" -> { character, chatFile, bot, chatId }
+        res.json({ bindings: store.allBindings() });
     }));
 
     router.post('/bindings/delete', wrap(async (req, res) => {
         const body = await readBody(req);
-        const bindings = store.loadBindings();
+        const bot = String(body.bot ?? 'default');
         const key = String(body.chatId ?? '');
-        if (!(key in bindings)) return res.status(404).json({ error: `No binding for ${key}.` });
+        const bindings = store.loadBindings(bot);
+        if (!(key in bindings)) return res.status(404).json({ error: `No ${bot} binding for ${key}.` });
         delete bindings[key];
-        store.saveBindings(bindings);
+        store.saveBindings(bot, bindings);
+        audit(bindings[key]?.character ?? null, 'state_changed', `telegram binding removed (${bot}:${key})`);
         broadcast('bindings_changed', {});
         res.json({ ok: true });
     }));

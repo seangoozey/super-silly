@@ -331,6 +331,23 @@ test('web inbound messages mirror to telegram with You: prefix; telegram does no
     assert.equal(h.delivered.length, before, 'telegram-source inbound is not mirrored back');
 });
 
+test('bindings are scoped per bot with legacy flat migration', async () => {
+    const card = characterCard('Bindy');
+    const h = buildHarness({ card });
+    // legacy flat bindings file -> treated as the default bot
+    fs.writeFileSync(path.join(h.root, 'autolife', 'bindings.json'), JSON.stringify({ '111': { character: 'Bindy', chatFile: 'a.jsonl' } }));
+    assert.deepEqual(h.store.loadBindings('default'), { '111': { character: 'Bindy', chatFile: 'a.jsonl' } });
+    assert.deepEqual(h.store.loadBindings('maya'), {});
+
+    // per-bot saves don't leak into each other
+    h.store.saveBindings('maya', { '222': { character: 'Bindy', chatFile: 'b.jsonl' } });
+    assert.ok(h.store.loadBindings('default')['111']);
+    assert.ok(h.store.loadBindings('maya')['222']);
+    const all = h.store.allBindings();
+    assert.ok(all['default:111'] && all['maya:222']);
+    assert.equal(all['maya:222'].bot, 'maya');
+});
+
 test('status() summarizes life state', async () => {
     const card = characterCard('Sasha');
     const h = buildHarness({ card });

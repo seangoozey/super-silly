@@ -148,13 +148,38 @@ export class StateStore {
         } catch { /* nothing to remove */ }
     }
 
-    /** Telegram chat bindings: chatId -> { character, chatFile } */
-    loadBindings() {
-        return this._readJson('bindings.json', {});
+    /**
+     * Telegram chat bindings, scoped per bot:
+     *   { bots: { <botName>: { <chatId>: { character, chatFile, audit? } } } }
+     * Legacy flat files ({ chatId: binding }) are treated as the 'default' bot.
+     * @param {string} bot bot name ('default' for the shared bot)
+     */
+    loadBindings(bot = 'default') {
+        const raw = this._readJson('bindings.json', null);
+        if (!raw) return {};
+        const shaped = raw.bots ? raw : { bots: { default: raw } }; // legacy flat migration
+        return shaped.bots[bot] ?? {};
     }
 
-    saveBindings(bindings) {
-        this._writeJson('bindings.json', bindings ?? {});
+    saveBindings(bot = 'default', bindings) {
+        const raw = this._readJson('bindings.json', null);
+        const shaped = raw ? (raw.bots ? raw : { bots: { default: raw } }) : { bots: {} };
+        shaped.bots[bot] = bindings ?? {};
+        this._writeJson('bindings.json', shaped);
+    }
+
+    /** Merged view across all bots: chatId -> { ...binding, bot }. */
+    allBindings() {
+        const raw = this._readJson('bindings.json', null);
+        if (!raw) return {};
+        const shaped = raw.bots ? raw : { bots: { default: raw } };
+        const merged = {};
+        for (const [bot, chats] of Object.entries(shaped.bots ?? {})) {
+            for (const [chatId, b] of Object.entries(chats ?? {})) {
+                if (b?.character) merged[`${bot}:${chatId}`] = { ...b, bot, chatId };
+            }
+        }
+        return merged;
     }
 
     loadTelegramOffset() {

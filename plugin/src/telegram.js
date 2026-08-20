@@ -8,10 +8,13 @@ export class TelegramTransport {
      * @param {{ token: string, allowedChatIds: number[], store: object, engine: object,
      *           cards: object, chatStore: object, commands: object, log?: (m:string)=>void,
      *           emit?: (t:string,d:object)=>void, fetchImpl?: typeof fetch,
-     *           maxDocumentMb?: number }} deps
+     *           maxDocumentMb?: number, botName?: string }} deps
+     * One transport per bot token. Each bot keeps its own chat bindings
+     * (namespaced by botName), so per-character bots get full separation.
      */
     constructor(deps) {
-        this.name = 'telegram';
+        this.name = deps.botName ? `telegram:${deps.botName}` : 'telegram';
+        this.botName = deps.botName ?? 'default';
         this.token = deps.token;
         this.allowedChatIds = deps.allowedChatIds ?? [];
         this.store = deps.store;
@@ -29,6 +32,15 @@ export class TelegramTransport {
 
     get enabled() {
         return Boolean(this.token);
+    }
+
+    /** Bindings scoped to this bot. */
+    myBindings() {
+        return this.store.loadBindings(this.botName);
+    }
+
+    saveMyBindings(bindings) {
+        this.store.saveBindings(this.botName, bindings);
     }
 
     start() {
@@ -127,7 +139,7 @@ export class TelegramTransport {
 
         if (!text) return; // stickers/photos/etc: v1 ignores
 
-        const bindings = this.store.loadBindings();
+        const bindings = this.myBindings();
         const binding = bindings[String(chatId)];
         if (!binding?.character) {
             await this.send(chatId, 'No character bound to this chat yet — send /chars and then /switch <name>.');
@@ -165,7 +177,7 @@ export class TelegramTransport {
     /** Engine hook: character started composing — show typing in bound chats. */
     async onComposing(character) {
         if (!this.enabled) return;
-        const bindings = this.store.loadBindings();
+        const bindings = this.myBindings();
         for (const [chatId, b] of Object.entries(bindings)) {
             if (b?.character === character) {
                 this.api('sendChatAction', { chat_id: Number(chatId), action: 'typing' }).catch(() => {});
@@ -175,7 +187,7 @@ export class TelegramTransport {
 
     /** Engine hook: deliver a generated message to every chat bound to the character. */
     async deliver(character, text) {
-        const bindings = this.store.loadBindings();
+        const bindings = this.myBindings();
         const targets = Object.entries(bindings).filter(([, b]) => b?.character === character).map(([chatId]) => Number(chatId));
         await Promise.all(targets.map((chatId) => this.send(chatId, text)));
     }
@@ -187,7 +199,7 @@ export class TelegramTransport {
      */
     onAudit(entry) {
         if (!this.enabled || !entry?.text) return;
-        const bindings = this.store.loadBindings();
+        const bindings = this.myBindings();
         for (const [chatId, b] of Object.entries(bindings)) {
             if (!b?.audit) continue;
             if (entry.character && b.character !== entry.character) continue;
@@ -197,10 +209,10 @@ export class TelegramTransport {
 
     /** Bind a telegram chat to a character (latest chat or a fresh one). */
     async bind(chatId, entry) {
-        const bindings = this.store.loadBindings();
+        const bindings = this.myBindings();
         const { file } = this.chatStore.getOrCreateChat(entry.name, entry.card?.data?.first_mes ?? null);
         bindings[String(chatId)] = { character: entry.name, chatFile: file };
-        this.store.saveBindings(bindings);
+        this.saveMyBindings(bindings);
         // point the character's active chat at this conversation
         const state = this.store.loadState(entry.name, { initialRelationship: entry.autolife?.relationship?.initial });
         state.chatFile = file;
