@@ -538,7 +538,10 @@ export class Engine {
             try {
                 if (!(await this.ollama.hasModel(model))) {
                     const ok = await this.ollama.ensureModel(model, (p) => this.emit('model_pull', { model, ...p }));
-                    if (!ok) continue;
+                    if (!ok) {
+                        this.#audit(entry.name, 'model_fallback', `${model} is not installed and could not be pulled — trying the next model`);
+                        continue;
+                    }
                 }
                 const raw = await this.ollama.chat({
                     model,
