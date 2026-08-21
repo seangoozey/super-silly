@@ -104,6 +104,23 @@ test('cleanModelOutput strips thinking blocks', () => {
     assert.equal(cleanModelOutput('plain reply'), 'plain reply');
 });
 
+test('splitIntoTexts turns paragraphs into texting bursts', async () => {
+    const { splitIntoTexts } = await import('../plugin/src/llm.js');
+    assert.deepEqual(splitIntoTexts('one text only'), ['one text only']);
+    assert.deepEqual(
+        splitIntoTexts('first text\n\nsecond text\n\nthird text'),
+        ['first text', 'second text', 'third text'],
+    );
+    // single newlines inside a paragraph collapse; long paragraphs sentence-split
+    const long = 'Sentence one is here. Sentence two follows it. '.repeat(40);
+    const parts = splitIntoTexts(long);
+    assert.ok(parts.length > 1);
+    assert.ok(parts.every((p) => p.length <= 910));
+    // never more than six bursts
+    const many = Array.from({ length: 12 }, (_, i) => `paragraph ${i}`).join('\n\n');
+    assert.equal(splitIntoTexts(many).length, 6);
+});
+
 test('prompt templates place sections into placeholders and drop omissions', async () => {
     const { buildSystemPrompt, promptSections } = await import('../plugin/src/llm.js');
     const life = { activity: 'at the studio', availability: 0.2, mood: 'focused', local: { hhmm: '14:05', weekdayName: 'Monday' } };

@@ -10,7 +10,44 @@ const LENGTH_DIRECTIVE = {
     long: 'Send ONE longer text message (a solid paragraph at most), like a real person texting.',
 };
 
-export const NUM_PREDICT = { short: 120, medium: 260, long: 500 };
+export const NUM_PREDICT = { short: 200, medium: 360, long: 700 };
+
+/**
+ * Split model output into texting-style bursts: one message per paragraph
+ * (blank-line separated), the way a real person sends several texts in a row.
+ * Long single paragraphs are sentence-split around ~900 chars; at most 6 parts.
+ */
+export function splitIntoTexts(text) {
+    const paragraphs = String(text ?? '')
+        .split(/\n{2,}/)
+        .map((p) => p.trim().replace(/\n/g, ' '))
+        .filter(Boolean);
+    const parts = [];
+    for (const p of paragraphs) {
+        if (p.length <= 900) {
+            parts.push(p);
+            continue;
+        }
+        // sentence-split oversized paragraphs
+        const sentences = p.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) ?? [p];
+        let buf = '';
+        for (const s of sentences) {
+            if ((buf + s).length > 900 && buf) {
+                parts.push(buf.trim());
+                buf = s;
+            } else {
+                buf += s;
+            }
+        }
+        if (buf.trim()) parts.push(buf.trim());
+    }
+    if (parts.length > 6) {
+        const head = parts.slice(0, 5);
+        head.push(parts.slice(5).join(' '));
+        return head;
+    }
+    return parts.length ? parts : [String(text ?? '').trim()].filter(Boolean);
+}
 
 export class OllamaClient {
     /**

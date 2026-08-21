@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01 } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, splitIntoTexts, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -598,11 +598,15 @@ export class Engine {
         this.log(`"${entry.name}" ${kind} → "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}" [${usedModel}]`);
         this.emit('character_message', { character: entry.name, kind, mes: text, chatFile: state.chatFile });
         const kindLabel = { reply: 'replied', initiative: 'texted you first (initiative)', catchup: 'caught up on the missed message', followup: 'sent a follow-up nudge' }[kind] ?? kind;
-        this.#audit(entry.name, 'sent', `${kindLabel} — "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}" [${usedModel}, ${Date.now() - startedMs} ms]`);
+        const parts = splitIntoTexts(text);
+        this.#audit(entry.name, 'sent', `${kindLabel} — ${parts.length > 1 ? `${parts.length} texts, starting "${parts[0].slice(0, 60)}…"` : `"${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"`} [${usedModel}, ${Date.now() - startedMs} ms]`);
 
         for (const t of this.transports) {
             try {
-                await t.deliver?.(entry.name, text, { kind });
+                // one text per paragraph — the per-chat queue paces them ~1s apart
+                for (const part of parts) {
+                    await t.deliver?.(entry.name, part, { kind });
+                }
             } catch (err) {
                 this.log(`transport ${t.name ?? '(unnamed)'} delivery failed: ${err.message}`);
             }
