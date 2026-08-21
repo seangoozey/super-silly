@@ -155,6 +155,9 @@ export class OllamaClient {
             model: req.model,
             messages: req.messages,
             stream: false,
+            // keep models resident in VRAM indefinitely — the engine texts at
+            // arbitrary hours and reloading 17GB from disk on the P40 is brutal
+            keep_alive: req.keepAlive ?? -1,
             options: {
                 temperature: req.temperature ?? 0.9,
                 num_predict: req.numPredict ?? 160,
@@ -185,7 +188,7 @@ export class OllamaClient {
         const res = await this.fetchImpl(`${this.baseUrl}/api/embeddings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, prompt: String(text).slice(0, 4000) }),
+            body: JSON.stringify({ model, prompt: String(text).slice(0, 4000), keep_alive: -1 }),
             signal: this._signal(60_000),
         });
         const json = await res.json().catch(() => ({}));
