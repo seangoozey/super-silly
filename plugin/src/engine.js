@@ -565,6 +565,9 @@ export class Engine {
                 }
             } catch (err) {
                 this.log(`generation with "${model}" failed: ${err.message}`);
+                const remaining = candidates.indexOf(model) < candidates.length - 1;
+                this.#audit(entry.name, 'model_fallback',
+                    `${model} failed: ${String(err?.message ?? err).slice(0, 160)}${remaining ? ' — trying the fallback model' : ' — no other model available'}`);
             }
         }
 
