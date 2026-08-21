@@ -36,6 +36,11 @@ export function defaultSettings() {
             // SillyTavern chat headers; falls back to 'User'.
             name: process.env.AUTOLIFE_USER_NAME || '',
         },
+        prompt: {
+            // Global default system-prompt template. Empty = built-in assembly.
+            // Cards can override per character (autolife.prompt.template).
+            template: '',
+        },
         telegram: {
             // Token/allowlist: settings file wins, env (set by the container) is the fallback.
             token: '',

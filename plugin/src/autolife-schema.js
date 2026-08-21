@@ -1,7 +1,7 @@
 // Autolife card extension schema: defaults + validation.
 // Pure module, no dependencies. Shared by the server plugin and the card CLI.
 
-export const SPEC_VERSION = '1.1';
+export const SPEC_VERSION = '1.2';
 export const EXTENSION_KEY = 'autolife';
 
 export const DEFAULTS = Object.freeze({
@@ -33,6 +33,14 @@ export const DEFAULTS = Object.freeze({
         enabled: true,
         max_entries: 4000,
         retrieve_count: 3,
+    },
+    prompt: {
+        // Optional template for the engine's system prompt. Empty = built-in
+        // assembly. Placeholders: {{card_system}} {{identity}} {{description}}
+        // {{personality}} {{scenario}} {{life}} {{relationship}} {{journal}}
+        // {{style}} {{post_history}} {{time}} {{weekday}} {{activity}}
+        // {{char}} {{user}}. Omitted placeholders drop their sections.
+        template: '',
     },
 });
 
@@ -196,6 +204,18 @@ export function validateAutolife(raw) {
         }
     }
 
+    if (raw.prompt !== undefined) {
+        if (!isPlainObject(raw.prompt)) {
+            errors.push('prompt must be an object.');
+        } else if (raw.prompt.template !== undefined && raw.prompt.template !== null) {
+            if (typeof raw.prompt.template !== 'string') {
+                errors.push('prompt.template must be a string.');
+            } else if (raw.prompt.template.length > 8000) {
+                errors.push('prompt.template is limited to 8000 characters.');
+            }
+        }
+    }
+
     return { valid: errors.length === 0, errors, warnings };
 }
 
@@ -264,6 +284,7 @@ export function normalizeAutolife(raw) {
     out.relationship = { ...d.relationship, ...(raw?.relationship ?? {}) };
     out.journal = { ...d.journal, ...(raw?.journal ?? {}) };
     out.memory = { ...d.memory, ...(raw?.memory ?? {}) };
+    out.prompt = { ...d.prompt, ...(raw?.prompt ?? {}) };
     out.schedule = (Array.isArray(out.schedule) ? out.schedule : []).map((b) => ({
         days: b.days ?? [0, 1, 2, 3, 4, 5, 6],
         availability: b.availability ?? 0.5,

@@ -218,6 +218,12 @@ export function registerRoutes(router, deps) {
                 }
             }
         }
+        if (body.prompt) {
+            settings.prompt = { ...settings.prompt, ...body.prompt };
+            if (typeof body.prompt.template === 'string') {
+                audit(null, 'prompt', `global prompt template ${body.prompt.template.trim() ? 'updated' : 'cleared'} (${body.prompt.template.length} chars)`);
+            }
+        }
         if (body.telegram) {
             // empty token string means "keep existing"; explicit null clears it
             if (typeof body.telegram.token === 'string' && body.telegram.token.trim()) settings.telegram.token = body.telegram.token.trim();
@@ -264,6 +270,28 @@ export function registerRoutes(router, deps) {
         audit(bindings[key]?.character ?? null, 'state_changed', `telegram binding removed (${bot}:${key})`);
         broadcast('bindings_changed', {});
         res.json({ ok: true });
+    }));
+
+    // ---- prompt template ----
+    router.get('/prompt/preview', wrap(async (req, res) => {
+        const name = String(req.query?.name ?? '');
+        const entry = cards.find(name);
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${name}".` });
+        const { evaluate } = await import('./schedule.js');
+        const { buildSystemPrompt } = await import('./llm.js');
+        const settings = store.loadSettings();
+        const state = store.loadState(entry.name, { initialRelationship: entry.autolife?.relationship?.initial ?? 20 });
+        const template = entry.autolife.prompt?.template?.trim() || settings.prompt?.template?.trim() || null;
+        const system = buildSystemPrompt({
+            card: entry.card,
+            autolife: entry.autolife,
+            life: evaluate(entry.autolife, new Date()),
+            relationshipScore: state.relationship,
+            journal: state.journal ?? [],
+            userName: chatStore.userName,
+            template,
+        });
+        res.json({ system, template: template ?? '', source: entry.autolife.prompt?.template?.trim() ? 'card' : (settings.prompt?.template?.trim() ? 'global' : 'builtin') });
     }));
 
     // ---- models ----

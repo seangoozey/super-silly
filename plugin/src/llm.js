@@ -213,41 +213,71 @@ export class OllamaClient {
  * @param {{ card: object, autolife: object, life: {activity:string, availability:number, mood:string|null, local:object},
  *           relationshipScore: number, journal: string[], userName: string }} ctx
  */
+/**
+ * Build the system prompt describing who the character is and their life right now.
+ * With ctx.template (card override or global default), sections are placed into
+ * the template's {{placeholders}} instead of the built-in fixed assembly.
+ */
 export function buildSystemPrompt(ctx) {
+    const s = promptSections(ctx);
+    const template = (typeof ctx.template === 'string' && ctx.template.trim()) ? ctx.template : null;
+    if (!template) {
+        return [s.cardSystem, s.identity, s.description, s.personality, s.scenario, s.life, s.relationship, s.journal, s.style, s.postHistory]
+            .filter(Boolean).join('\n\n');
+    }
+    const sub = (name) => s[name] ?? '';
+    let out = template
+        .replace(/\{\{card_system\}\}/gi, () => sub('cardSystem'))
+        .replace(/\{\{identity\}\}/gi, () => sub('identity'))
+        .replace(/\{\{description\}\}/gi, () => sub('description'))
+        .replace(/\{\{personality\}\}/gi, () => sub('personality'))
+        .replace(/\{\{scenario\}\}/gi, () => sub('scenario'))
+        .replace(/\{\{life\}\}/gi, () => sub('life'))
+        .replace(/\{\{relationship\}\}/gi, () => sub('relationship'))
+        .replace(/\{\{journal\}\}/gi, () => sub('journal'))
+        .replace(/\{\{style\}\}/gi, () => sub('style'))
+        .replace(/\{\{post_history\}\}/gi, () => sub('postHistory'))
+        .replace(/\{\{time\}\}/gi, () => ctx.life.local.hhmm)
+        .replace(/\{\{weekday\}\}/gi, () => ctx.life.local.weekdayName ?? '')
+        .replace(/\{\{activity\}\}/gi, () => ctx.life.activity)
+        .replace(/\{\{char\}\}/gi, () => (ctx.card.data ?? ctx.card).name ?? '')
+        .replace(/\{\{user\}\}/gi, () => ctx.userName);
+    return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * The named sections available to prompt templates (and the built-in order).
+ * Empty/absent sections are null so templates can omit them cleanly.
+ */
+export function promptSections(ctx) {
     const data = ctx.card.data ?? ctx.card;
     const name = data.name ?? 'the character';
     const a = ctx.autolife;
     const sub = (t) => String(t ?? '').replaceAll('{{char}}', name).replaceAll('{{user}}', ctx.userName);
-    const lines = [];
+    const sections = {};
 
-    if (data.system_prompt && data.system_prompt.trim()) {
-        lines.push(sub(data.system_prompt));
-    }
-    lines.push(
-        `You are ${name}, a real person texting with ${ctx.userName} on a phone. You are NOT an AI; never break character, never mention being a model or a simulation.`,
-    );
-    if (data.description?.trim()) lines.push(`Who you are: ${sub(data.description.trim())}`);
-    if (data.personality?.trim()) lines.push(`Personality: ${sub(data.personality.trim())}`);
-    if (data.scenario?.trim()) lines.push(`Situation between you two: ${sub(data.scenario.trim())}`);
+    sections.cardSystem = data.system_prompt?.trim() ? sub(data.system_prompt) : null;
+    sections.identity = `You are ${name}, a real person texting with ${ctx.userName} on a phone. You are NOT an AI; never break character, never mention being a model or a simulation.`;
+    sections.description = data.description?.trim() ? `Who you are: ${sub(data.description)}` : null;
+    sections.personality = data.personality?.trim() ? `Personality: ${sub(data.personality)}` : null;
+    sections.scenario = data.scenario?.trim() ? `Situation between you two: ${sub(data.scenario)}` : null;
 
     const local = ctx.life.local;
-    lines.push(
-        `Your life right now: it is ${local.weekdayName ?? ''} ${local.hhmm} (${a.timezone}). You are currently ${ctx.life.activity}.`
-        + (ctx.life.mood ? ` You feel ${ctx.life.mood}.` : ''),
-    );
-    lines.push(`Your relationship with ${ctx.userName} is ${relationshipDescriptor(ctx.relationshipScore)} (${Math.round(ctx.relationshipScore)}/100).`);
+    sections.life = `Your life right now: it is ${local.weekdayName ?? ''} ${local.hhmm} (${a.timezone}). You are currently ${ctx.life.activity}.`
+        + (ctx.life.mood ? ` You feel ${ctx.life.mood}.` : '');
+    sections.relationship = `Your relationship with ${ctx.userName} is ${relationshipDescriptor(ctx.relationshipScore)} (${Math.round(ctx.relationshipScore)}/100).`;
 
     if (a.journal?.enabled && ctx.journal?.length) {
         const recent = ctx.journal.slice(-3).map((j) => `- ${j.text}`).join('\n');
-        lines.push(`Your recent private notes to yourself (never mention the notes, just let them shape your messages):\n${recent}`);
+        sections.journal = `Your recent private notes to yourself (never mention the notes, just let them shape your messages):\n${recent}`;
+    } else {
+        sections.journal = null;
     }
 
-    lines.push(`How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions (unless your earlier messages clearly use them), no quotation marks around the message.`);
+    sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions (unless your earlier messages clearly use them), no quotation marks around the message.`;
+    sections.postHistory = data.post_history_instructions?.trim() ? `Additional standing instructions: ${sub(data.post_history_instructions)}` : null;
 
-    if (data.post_history_instructions?.trim()) {
-        lines.push(`Additional standing instructions: ${sub(data.post_history_instructions.trim())}`);
-    }
-    return lines.join('\n\n');
+    return sections;
 }
 
 /**

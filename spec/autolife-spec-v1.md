@@ -1,6 +1,6 @@
-# Autolife — Autonomous Character Card Extension, Version 1.1
+# Autolife — Autonomous Character Card Extension, Version 1.2
 
-Status: **v1.1** (implementation target for super-silly v0.2; 1.0 cards remain fully valid)
+Status: **v1.2** (1.0/1.1 cards remain fully valid)
 Base: [Character Card Spec V3](https://github.com/kwaroran/character-card-spec-v3) (`spec: "chara_card_v3"`, `spec_version: "3.0"`)
 
 ## 1. Overview
@@ -119,7 +119,10 @@ the base spec).
     "journal": { ... },
 
     // Long-term recall over chat history (RAG). See §8a.
-    "memory": { ... }
+    "memory": { ... },
+
+    // Optional system-prompt template override. See §8b.
+    "prompt": { ... }
 }}}
 ```
 
@@ -252,6 +255,32 @@ The journal is never shown to the user directly (a future spec version may
 add a consent flag for surfacing it); it exists so proactive messages have
 material beyond the chat history.
 
+## 8b. `prompt` — system-prompt template override
+
+```jsonc
+{
+    // Optional template for the engine's system prompt. Empty string (default)
+    // uses the engine's built-in assembly. Available placeholders, each
+    // expanding to the corresponding built-in section (omitting a placeholder
+    // simply omits that section):
+    //   {{card_system}}        the card's own system_prompt
+    //   {{identity}}           "You are X, a real person texting with Y…"
+    //   {{description}}        "Who you are: …"
+    //   {{personality}}        "Personality: …"
+    //   {{scenario}}           "Situation between you two: …"
+    //   {{life}}               time/timezone/activity/mood line
+    //   {{relationship}}       relationship descriptor + score
+    //   {{journal}}            recent private notes block (if journaling on)
+    //   {{style}}              texting style directive
+    //   {{post_history}}       the card's post_history_instructions
+    //   {{time}} {{weekday}} {{activity}}   raw life values
+    //   {{char}} {{user}}      names
+    // Limited to 8000 characters. A global default template may be provided
+    // by the engine; the card's template takes precedence.
+    "template": ""
+}
+```
+
 ## 8a. `memory` — long-term recall over history (RAG)
 
 ```jsonc
@@ -319,6 +348,7 @@ list; the plugin uses the same module.
 
 ## 11. Changelog
 
+- **1.2** — `prompt` section: per-card system-prompt template with named placeholders.
 - **1.1** — `memory` section: engine-side RAG over chat history (`enabled`, `retrieve_count`, `max_entries`).
 - **1.0** — initial spec: schedule, behavior, initiative, relationship.initial,
   journal.enabled.

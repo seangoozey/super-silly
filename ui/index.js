@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.5.0';
+const EXT_VERSION = '0.6.0';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -85,7 +85,7 @@ globalThis.autolifeGenerateInterceptor = async function (chat, contextSize, abor
     abort(true);
 };
 
-// ---------------------------------------------------------------- dashboard panel (extensions drawer)
+// ---------------------------------------------------------------- dashboard: drawer entry (launcher) + full overlay
 
 function panelHtml() {
     return `
@@ -98,11 +98,33 @@ function panelHtml() {
             <div class="inline-drawer-content">
                 <div id="autolife_status" class="autolife-status-line">…</div>
                 <div id="autolife_connect_hint" class="autolife-status-line" style="display:none; color:#e0b060;"></div>
+                <div style="margin-top:6px;">
+                    <button type="button" class="menu_button autolife-btn" id="autolife_open_dashboard"><i class="fa-solid fa-expand"></i> Open Autolife dashboard</button>
+                    <div class="autolife-muted" style="margin-top:4px;">Also on the top bar: <i class="fa-solid fa-heart-pulse"></i></div>
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
 
-                <div class="autolife-form-grid" style="margin-top:6px;">
-                    <label>Your name (as characters see you)</label>
-                    <span><input type="text" id="autolife_persona_name" placeholder="auto — your default ST persona">
-                    <button type="button" class="menu_button autolife-btn" id="autolife_persona_save">Save</button></span>
+function dashboardHtml() {
+    return `
+    <div id="autolife_dashboard" class="autolife-dashboard" style="display:none;">
+        <div class="autolife-dashboard-head">
+            <b><i class="fa-solid fa-heart-pulse"></i> Autolife</b>
+            <span id="autolife_dash_status" class="autolife-muted"></span>
+            <a class="autolife-btn" id="autolife_dashboard_close" title="close (Esc)"><i class="fa-solid fa-xmark"></i></a>
+        </div>
+        <div class="autolife-dashboard-body">
+            <div class="autolife-dash-col">
+
+                <div class="autolife-section" style="border-top:none;">
+                    <h4>Engine</h4>
+                    <div class="autolife-form-grid">
+                        <label>Your name (as characters see you)</label>
+                        <span><input type="text" id="autolife_persona_name" placeholder="auto — your default ST persona">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_persona_save">Save</button></span>
+                    </div>
                 </div>
 
                 <div class="autolife-section">
@@ -115,8 +137,46 @@ function panelHtml() {
                         <select id="autolife_audit_filter" style="font-size:0.85em; margin-left:8px;"></select>
                         <a class="autolife-btn" id="autolife_audit_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a>
                     </h4>
-                    <div class="autolife-muted">Every engine decision — replies (instant/delayed/ignored), initiative rolls and blocks, retries, memory recalls, journal notes. Also live in Telegram via /audit on.</div>
+                    <div class="autolife-muted">Every engine decision — replies (instant/delayed/ignored), initiative rolls and blocks, retries, model fallbacks, memory recalls, journal notes. Also live in Telegram via /audit on.</div>
                     <div id="autolife_audit_feed" class="autolife-audit-feed"></div>
+                </div>
+
+                <div class="autolife-section">
+                    <h4>Prompt template <span class="autolife-muted">(global default)</span></h4>
+                    <div class="autolife-muted">Applies to every character; a character's own template (Autolife panel → Prompt) overrides it. Empty = built-in assembly. Placeholders: {{card_system}} {{identity}} {{description}} {{personality}} {{scenario}} {{life}} {{relationship}} {{journal}} {{style}} {{post_history}} {{time}} {{weekday}} {{activity}} {{char}} {{user}}.</div>
+                    <textarea id="autolife_prompt_global" rows="4" style="width:100%; margin-top:4px;" placeholder="empty — built-in assembly"></textarea>
+                    <div style="margin-top:4px;">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_prompt_global_save">Save template</button>
+                        <span id="autolife_prompt_global_msg" class="autolife-muted"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="autolife-dash-col">
+                <div class="autolife-section" style="border-top:none;">
+                    <h4>Model</h4>
+                    <div class="autolife-form-grid">
+                        <label>Current model</label>
+                        <select id="autolife_model_select"></select>
+                        <label>or enter any model</label>
+                        <input type="text" id="autolife_model_free" placeholder="hf.co/user/repo:Q4_K_M">
+                        <label>Thinking (engine replies)</label>
+                        <select id="autolife_think">
+                            <option value="off">off — fast short texts (default)</option>
+                            <option value="on">on — model reasons first (thinking models)</option>
+                            <option value="auto">auto — model template default</option>
+                        </select>
+                    </div>
+                    <div style="margin-top:6px;">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_model_use">Use</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_model_pull">Pull</button>
+                        <span id="autolife_model_msg" class="autolife-muted"></span>
+                    </div>
+                    <div id="autolife_pull_progress" style="display:none; margin-top:8px;">
+                        <div class="autolife-status-line" id="autolife_pull_label"></div>
+                        <div class="autolife-pull-bar"><div id="autolife_pull_fill"></div></div>
+                        <div class="autolife-muted" id="autolife_pull_detail"></div>
+                    </div>
                 </div>
 
                 <div class="autolife-section">
@@ -150,35 +210,17 @@ function panelHtml() {
                     <div id="autolife_bindings" class="autolife-status-line"></div>
                     <div class="autolife-muted">One bot = one chat with one character at a time (/switch changes it). For full separation give a character its own bot: add it above, message it in Telegram, /switch there — bindings are per-bot, so characters never share chats. Commands: /chars, /switch, /status, /start, /stop, /model, /upload.</div>
                 </div>
-
-                <div class="autolife-section">
-                    <h4>Model</h4>
-                    <div class="autolife-form-grid">
-                        <label>Current model</label>
-                        <select id="autolife_model_select"></select>
-                        <label>or enter any model</label>
-                        <input type="text" id="autolife_model_free" placeholder="hf.co/user/repo:Q4_K_M">
-                        <label>Thinking (engine replies)</label>
-                        <select id="autolife_think">
-                            <option value="off">off — fast short texts (default)</option>
-                            <option value="on">on — model reasons first (thinking models)</option>
-                            <option value="auto">auto — model template default</option>
-                        </select>
-                    </div>
-                    <div style="margin-top:6px;">
-                        <button type="button" class="menu_button autolife-btn" id="autolife_model_use">Use</button>
-                        <button type="button" class="menu_button autolife-btn" id="autolife_model_pull">Pull</button>
-                        <span id="autolife_model_msg" class="autolife-muted"></span>
-                    </div>
-                    <div id="autolife_pull_progress" style="display:none; margin-top:8px;">
-                        <div class="autolife-status-line" id="autolife_pull_label"></div>
-                        <div class="autolife-pull-bar"><div id="autolife_pull_fill"></div></div>
-                        <div class="autolife-muted" id="autolife_pull_detail"></div>
-                    </div>
-                </div>
             </div>
         </div>
     </div>`;
+}
+
+function openDashboard() {
+    $('#autolife_dashboard').show();
+}
+
+function closeDashboard() {
+    $('#autolife_dashboard').hide();
 }
 
 // ---------------------------------------------------------------- character editor section (compact launcher)
@@ -297,6 +339,18 @@ function panelModalHtml() {
                         <span id="autolife_save_msg" class="autolife-muted"></span>
                     </div>
                 </div>
+
+                <div class="autolife-section">
+                    <h4>Prompt template <span class="autolife-muted">(this character; empty = global/built-in)</span></h4>
+                    <div class="autolife-muted">Same placeholders as the global template. Sections you omit are simply absent from the prompt.</div>
+                    <textarea id="autolife_prompt_card" rows="6" style="width:100%; margin-top:4px;" placeholder="empty — global template or built-in assembly"></textarea>
+                    <div style="margin-top:4px;">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_prompt_card_save">Save with card</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_prompt_preview_btn"><i class="fa-solid fa-eye"></i> Preview rendered prompt</button>
+                        <span id="autolife_prompt_msg" class="autolife-muted"></span>
+                    </div>
+                    <pre id="autolife_prompt_preview" class="autolife-audit-feed" style="display:none; white-space:pre-wrap;"></pre>
+                </div>
             </div>
         </div>
     </div>`;
@@ -381,6 +435,7 @@ async function refreshPanel() {
             $('#autolife_mem_on').prop('checked', a.memory?.enabled ?? true);
             $('#autolife_mem_k').val(a.memory?.retrieve_count ?? 3);
             $('#autolife_mem_max').val(a.memory?.max_entries ?? 4000);
+            $('#autolife_prompt_card').val(a.prompt?.template ?? '');
             $('#autolife_sched_rows').html((a.schedule.length ? a.schedule : []).map(schedRowHtml).join(''));
         }
     } catch (err) {
@@ -432,9 +487,9 @@ async function refreshStatus() {
         const tg = s.telegram?.enabled ? 'telegram on' : 'telegram off';
         const model = s.model?.current ?? '?';
         $('#autolife_badge').text(`running · ${tg}`);
-        $('#autolife_status').text(
-            `Autolife ${EXT_VERSION} · engine ${s.engine.running ? 'running' : 'stopped'} · tick ${s.engine.tickSeconds}s · model ${model} · Ollama ${s.ollama?.version ?? 'unreachable'}`,
-        );
+        const statusLine = `Autolife ${EXT_VERSION} · engine ${s.engine.running ? 'running' : 'stopped'} · tick ${s.engine.tickSeconds}s · model ${model} · Ollama ${s.ollama?.version ?? 'unreachable'}`;
+        $('#autolife_status').text(statusLine);
+        $('#autolife_dash_status').text(statusLine);
         state.enabled = new Set(s.engine.characters.filter((c) => c.enabled && !c.paused).map((c) => c.name));
         state.charStatus = new Map(s.engine.characters.map((c) => [c.name, c]));
 
@@ -585,7 +640,7 @@ async function loadCharacterEditor() {
 
 function buildAutolifeFromForm() {
     return {
-        version: '1.1',
+        version: '1.2',
         timezone: $('#autolife_tz').val().trim() || 'UTC',
         schedule: readSchedRows(),
         behavior: {
@@ -612,6 +667,7 @@ function buildAutolifeFromForm() {
             retrieve_count: Number($('#autolife_mem_k').val()),
             max_entries: Number($('#autolife_mem_max').val()),
         },
+        prompt: { template: $('#autolife_prompt_card').val() },
     };
 }
 
@@ -917,6 +973,7 @@ async function loadTelegramSection() {
     try {
         const { settings } = await api('/settings');
         $('#autolife_persona_name').val(settings.persona?.name ?? '');
+        $('#autolife_prompt_global').val(settings.prompt?.template ?? '');
         $('#autolife_tg_token').attr('placeholder', settings.telegram?.hasToken ? settings.telegram.token : '123456:ABC… (from @BotFather)');
         $('#autolife_tg_ids').val((settings.telegram?.allowed_chat_ids ?? []).join(', '));
         $('#autolife_tg_bots').val((settings.telegram?.bots ?? [])
@@ -1155,9 +1212,34 @@ function wireEvents() {
         if (name) openCharacterPanel(name);
     });
 
-    // ESC closes the panel
+    // --- dashboard ---
+    $(document).on('click', '#autolife_open_dashboard, #autolife_top_button', () => openDashboard());
+    $(document).on('click', '#autolife_dashboard_close', () => closeDashboard());
+
+    // --- prompt templates ---
+    $(document).on('click', '#autolife_prompt_global_save', async () => {
+        try {
+            await api('/settings', 'POST', { prompt: { template: $('#autolife_prompt_global').val() } });
+            $('#autolife_prompt_global_msg').text('saved ✓');
+        } catch (e) { $('#autolife_prompt_global_msg').text(e.message); }
+        setTimeout(() => $('#autolife_prompt_global_msg').text(''), 4000);
+    });
+
+    $(document).on('click', '#autolife_prompt_card_save', () => saveCard());
+
+    $(document).on('click', '#autolife_prompt_preview_btn', async () => {
+        if (!panelChar) return;
+        try {
+            const p = await api(`/prompt/preview?name=${encodeURIComponent(panelChar)}`);
+            $('#autolife_prompt_preview').show().text(p.system + `\n\n— rendered from: ${p.source} template, ${p.system.length} chars —`);
+        } catch (e) { toast(e.message); }
+    });
+
+    // ESC closes the topmost surface (dashboard, then character panel)
     $(document).on('keydown', (ev) => {
-        if (ev.key === 'Escape' && panelChar) closeCharacterPanel();
+        if (ev.key !== 'Escape') return;
+        if ($('#autolife_dashboard').is(':visible')) return closeDashboard();
+        if (panelChar) closeCharacterPanel();
     });
 
     // --- monitor buttons ---
@@ -1329,8 +1411,17 @@ jQuery(() => {
             return; // ST never became available; nothing we can do
         }
 
-        // dashboard panel in the extensions drawer
+        // dashboard: slim launcher in the extensions drawer + full-screen overlay
         $('#extensions_settings2').append(panelHtml());
+        $('body').append(dashboardHtml());
+
+        // top-bar button (self-healing alongside the dashboard)
+        const injectTopButton = () => {
+            if ($('#autolife_top_button').length || !$('#top-bar').length) return;
+            $('#top-bar').append('<div id="autolife_top_button" class="fa-solid fa-heart-pulse" title="Autolife dashboard"></div>');
+        };
+        injectTopButton();
+        setInterval(injectTopButton, 5000); // re-inject if ST rebuilds the top bar
 
         // dedicated per-character panel modal (our own DOM — immune to ST changes)
         $('body').append(panelModalHtml());

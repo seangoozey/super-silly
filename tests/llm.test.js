@@ -103,3 +103,35 @@ test('cleanModelOutput strips thinking blocks', () => {
     assert.equal(cleanModelOutput('<think>truncated thinking with no close tag'), '');
     assert.equal(cleanModelOutput('plain reply'), 'plain reply');
 });
+
+test('prompt templates place sections into placeholders and drop omissions', async () => {
+    const { buildSystemPrompt, promptSections } = await import('../plugin/src/llm.js');
+    const life = { activity: 'at the studio', availability: 0.2, mood: 'focused', local: { hhmm: '14:05', weekdayName: 'Monday' } };
+    const card = { data: { name: 'Maya', description: 'designer', personality: 'warm', scenario: 'friends', system_prompt: '', post_history_instructions: '' } };
+    const ctx = {
+        card,
+        autolife: { timezone: 'America/New_York', behavior: { avg_message_length: 'short' }, journal: { enabled: true } },
+        life,
+        relationshipScore: 58,
+        journal: [{ ts: '2026-08-01T00:00:00Z', text: 'client logo again' }],
+        userName: 'Sean',
+    };
+
+    // built-in assembly when no template
+    const builtin = buildSystemPrompt(ctx);
+    assert.ok(builtin.includes('Who you are: designer'));
+    assert.ok(builtin.includes('at the studio'));
+
+    // template reorders, omits, and uses raw placeholders
+    const out = buildSystemPrompt({ ...ctx, template: '{{char}} texting {{user}} at {{time}} ({{activity}})\n{{description}}\n{{journal}}' });
+    assert.ok(out.startsWith('Maya texting Sean at 14:05'));
+    assert.ok(out.includes('at the studio'));
+    assert.ok(out.includes('Who you are: designer'));
+    assert.ok(out.includes('client logo again'));
+    assert.ok(!out.includes('Personality:'), 'omitted sections are absent');
+
+    // sections object exposes the named pieces
+    const sections = promptSections(ctx);
+    assert.ok(sections.life.includes('14:05'));
+    assert.equal(sections.personality, 'Personality: warm');
+});

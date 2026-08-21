@@ -245,6 +245,61 @@
     cursor: help;
 }
 
+/* ---- full-screen dashboard + top bar button ---- */
+
+#autolife_top_button {
+    cursor: pointer;
+    padding: 0 8px;
+    opacity: 0.75;
+}
+
+#autolife_top_button:hover {
+    opacity: 1;
+}
+
+.autolife-dashboard {
+    position: fixed;
+    inset: 0;
+    z-index: 99997;
+    background: var(--SmartThemeBlurTintColor, #17171a);
+    color: var(--SmartThemeBodyColor, #ddd);
+    display: flex;
+    flex-direction: column;
+}
+
+.autolife-dashboard-head {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #555);
+    font-size: 1.1em;
+}
+
+.autolife-dashboard-head .autolife-btn {
+    margin-left: auto;
+    font-size: 1.1em;
+}
+
+.autolife-dashboard-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
+    padding: 10px 18px 18px;
+    overflow-y: auto;
+}
+
+.autolife-dash-col {
+    min-width: 0;
+}
+
+@media (max-width: 900px) {
+    .autolife-dashboard-body {
+        grid-template-columns: 1fr;
+    }
+}
+
 .autolife-reload-banner {
     position: fixed;
     top: 12px;

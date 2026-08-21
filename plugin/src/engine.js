@@ -514,6 +514,7 @@ export class Engine {
             relationshipScore: state.relationship,
             journal: state.journal,
             userName: this.chatStore.userName,
+            template: entry.autolife.prompt?.template?.trim() || this.settings.prompt?.template?.trim() || null,
         });
 
         const numPredict = NUM_PREDICT[entry.autolife.behavior?.avg_message_length ?? 'short'] ?? 160;
