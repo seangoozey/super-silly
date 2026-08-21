@@ -8,6 +8,18 @@
 #   docker run --gpus all ...   (NVIDIA; needs nvidia-container-toolkit on the host)
 
 ARG ST_REF=release
+# Global-scope ARG so the ollama stage can be pinned/overridden at build time:
+#   docker build --build-arg OLLAMA_IMAGE=ollama/ollama:<tag> ...
+ARG OLLAMA_IMAGE=ollama/ollama:latest
+
+# ---- Stage 0: ollama binary + runners (CPU/CUDA) ----
+# Binary must live at /bin/ollama (as upstream): runner discovery resolves the
+# library root relative to the binary, and /bin -> / -> /lib/ollama hits
+# /usr/lib/ollama via Ubuntu's merged-usr layout.
+# (BuildKit does not support variable expansion in COPY --from directly —
+# hence this named stage. Remember: compose build does NOT re-pull base
+# images; `docker pull ollama/ollama:latest` first when updating.)
+FROM ${OLLAMA_IMAGE} AS ollama-src
 
 # ---- Stage 1: build SillyTavern (release branch) ----
 FROM node:22-bookworm-slim AS st-build
@@ -41,18 +53,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl tini libopenblas0 libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
 
-ARG OLLAMA_IMAGE=ollama/ollama:latest
-
-# Ollama binary + runners (CPU/CUDA) from the official image.
-# Binary must live at /bin/ollama (as upstream): runner discovery resolves the
-# library root relative to the binary, and /bin -> / -> /lib/ollama hits
-# /usr/lib/ollama via Ubuntu's merged-usr layout.
-# Rebuild with a pinned/newer image via:
-#   docker pull ollama/ollama:latest
-#   docker build --build-arg OLLAMA_IMAGE=ollama/ollama:<tag> ...
-# (compose build does NOT re-pull base images on its own)
-COPY --from=${OLLAMA_IMAGE} /bin/ollama /bin/ollama
-COPY --from=${OLLAMA_IMAGE} /usr/lib/ollama /usr/lib/ollama
+# Ollama binary + runners from the pinned stage above.
+COPY --from=ollama-src /bin/ollama /bin/ollama
+COPY --from=ollama-src /usr/lib/ollama /usr/lib/ollama
 
 # Node runtime (bookworm glibc <= ubuntu 24.04 glibc, binary is compatible)
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
