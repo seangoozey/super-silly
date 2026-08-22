@@ -5,6 +5,7 @@
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
 import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, NUM_PREDICT } from './llm.js';
+import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -28,6 +29,7 @@ export class Engine {
         this.log = deps.log ?? ((m) => console.log(`[Autolife] ${m}`));
         this.emit = deps.emit ?? (() => {});
         this.transports = deps.transports ?? [];
+        this.userDir = deps.userDir ?? null; // for reading ST textgen presets
         this.settings = this.store.loadSettings();
         this.#applyUserName();
         this.inFlight = new Map(); // character name -> Promise
@@ -194,6 +196,23 @@ export class Engine {
 
     effectiveModel() {
         return this.settings.model?.current || this.settings.model?.primary || 'llama3.2:3b';
+    }
+
+    /**
+     * Sampler override for a model from its assigned ST Text Completion
+     * preset (dashboard or /model preset). Null when none assigned/found —
+     * callers then use the engine sampler defaults unchanged.
+     */
+    #presetSamplersFor(model) {
+        const assigned = this.settings.model?.preset_by_model?.[model];
+        if (!assigned || !this.userDir) return null;
+        const preset = loadPreset(this.userDir, assigned);
+        if (!preset) {
+            this.log(`preset "${assigned}" assigned to ${model} not found — using engine sampler defaults`);
+            return null;
+        }
+        const samplers = presetToSamplers(preset);
+        return Object.keys(samplers).length ? { preset: assigned, samplers } : null;
     }
 
     // ------------------------------------------------------------ memory (RAG)
@@ -654,6 +673,7 @@ export class Engine {
 
         let text = '';
         let usedModel = null;
+        let usedPreset = null;
         let firstMore = false;
         for (const model of candidates) {
             try {
@@ -664,12 +684,16 @@ export class Engine {
                         continue;
                     }
                 }
+                // per-model sampler preset (ST Text Completion preset assigned
+                // in the dashboard) overrides the engine sampler defaults
+                const presetInfo = this.#presetSamplersFor(model);
                 const raw = await this.ollama.chat({
                     model,
                     messages,
                     numPredict: genNumPredict,
                     numCtx,
                     think,
+                    samplers: presetInfo?.samplers,
                 });
                 const cleaned = stripLeakedScaffolding(cleanModelOutput(raw));
                 if (cleaned.leaked) this.#audit(entry.name, 'leak_blocked', 'stripped leaked prompt scaffolding from the reply before sending');
@@ -691,6 +715,7 @@ export class Engine {
                         numPredict: genNumPredict,
                     numCtx,
                     think,
+                    samplers: presetInfo?.samplers,
                     });
                     const recleaned = stripLeakedScaffolding(cleanModelOutput(retry));
                     if (recleaned.leaked) this.#audit(entry.name, 'leak_blocked', 'stripped leaked prompt scaffolding from the retry');
@@ -707,6 +732,7 @@ export class Engine {
                 }
                 if (text) {
                     usedModel = model;
+                    usedPreset = presetInfo;
                     break;
                 }
             } catch (err) {
@@ -742,6 +768,7 @@ export class Engine {
                         numPredict: genNumPredict,
                     numCtx,
                         think,
+                        samplers: usedPreset?.samplers,
                     });
                     const cleanedNext = stripLeakedScaffolding(cleanModelOutput(rawNext));
                     const parsed = extractFollowUpMarker(cleanedNext.text);
@@ -794,6 +821,7 @@ export class Engine {
         this.#audit(entry.name, 'sent', `${kindLabel} — ${sendTexts.length > 1 ? `${sendTexts.length} texts, starting "${sendTexts[0].slice(0, 60)}…"` : `"${sendTexts[0].slice(0, 80)}${sendTexts[0].length > 80 ? '…' : ''}"`}`
             + `${journalCount ? ` · journal: ${journalCount} notes in prompt` : ''}`
             + `${memoryBlock ? ' · memory recalled' : ''}`
+            + `${usedPreset ? ` · preset: ${usedPreset.preset}` : ''}`
             + `${extra?.gapNote ? ` · ${extra.gapNote}` : ''}`
             + ` [${usedModel}, ${Date.now() - startedMs} ms]`);
 

@@ -194,7 +194,9 @@ export class OllamaClient {
             signal: this._signal(this.timeoutMs),
         });
 
-        const s = this.samplers ?? {};
+        // per-request preset overrides (ST textgen presets) merge over the
+        // engine defaults; an explicit per-call temperature still wins
+        const s = { ...(this.samplers ?? {}), ...(req.samplers ?? {}) };
         const body = {
             model: req.model,
             messages: req.messages,
@@ -211,6 +213,7 @@ export class OllamaClient {
                 ...(Number(s.top_p) > 0 && Number(s.top_p) <= 1 ? { top_p: Number(s.top_p) } : {}),
                 ...(Number.isFinite(Number(s.top_k)) && Number(s.top_k) >= 0 ? { top_k: Number(s.top_k) } : {}),
                 ...(Number(s.repeat_penalty) > 0 ? { repeat_penalty: Number(s.repeat_penalty) } : {}),
+                ...(Number(s.min_p) > 0 && Number(s.min_p) <= 1 ? { min_p: Number(s.min_p) } : {}),
             },
         };
         if (req.think === 'on') body.think = true;

@@ -406,13 +406,16 @@ export class LlamaCppClient {
         if (!fs.existsSync(file)) throw new Error(`model "${req.model}" is not downloaded — /model pull ${req.model} first`);
         await this.manager.ensureChatServer(req.model, file);
 
-        const s = this.samplers ?? {};
+        // per-request preset overrides (ST textgen presets) merge over the
+        // engine defaults; an explicit per-call temperature still wins
+        const s = { ...(this.samplers ?? {}), ...(req.samplers ?? {}) };
         const body = {
             model: req.model,
             messages: foldTrailingSystem(req.messages),
             stream: false,
             max_tokens: req.numPredict ?? 160,
             temperature: req.temperature ?? s.temperature ?? 0.7,
+            ...(Number(s.min_p) > 0 && Number(s.min_p) <= 1 ? { min_p: Number(s.min_p) } : {}),
             ...(Number(s.top_p) > 0 && Number(s.top_p) <= 1 ? { top_p: Number(s.top_p) } : {}),
             ...(Number(s.top_k) >= 0 ? { top_k: Number(s.top_k) } : {}),
             ...(Number(s.repeat_penalty) > 0 ? { repeat_penalty: Number(s.repeat_penalty) } : {}),

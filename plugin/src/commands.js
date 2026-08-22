@@ -3,6 +3,7 @@
 
 import { importCardBuffer } from './card-import.js';
 import { relationshipDescriptor } from './schedule.js';
+import { listTextGenPresets } from './presets.js';
 
 const NOT_YET = (name) => `/${name} is planned but not implemented yet. Coming in a future version.`;
 
@@ -82,7 +83,7 @@ export function createCommandRegistry(ctx) {
                 '/audit [on [full|normal|min]|off] — engine decisions in chat\n' +
                 '/new — wipe her state and start over (confirm)\n' +
                 '/memory — long-term memory status\n' +
-                '/model — model control (list/use/pull/think/temp/samplers)\n' +
+                '/model — model control (list/use/pull/think/temp/samplers/preset)\n' +
                 '/upload — attach a character card (.png/.json) to import it\n\n' +
                 'Then just text them like a real person. They might reply instantly… or a while later. Or be asleep.');
         },
@@ -242,7 +243,7 @@ export function createCommandRegistry(ctx) {
 
     register({
         name: 'model',
-        help: 'model control: /model [list | use <name> | pull <name> | think | temp | samplers]',
+        help: 'model control: /model [list | use <name> | pull <name> | think | temp | samplers | preset]',
         run: async (chatId, args) => {
             const sub = (args[0] ?? '').toLowerCase();
             const settings = store.loadSettings();
@@ -338,6 +339,36 @@ export function createCommandRegistry(ctx) {
                     'Defaults follow ReadyArt\'s full spec. nsigma + XTC apply on the llama.cpp backend only.');
             }
 
+            if (sub === 'preset') {
+                // assign an ST Text Completion preset to the CURRENT model
+                const name = args.slice(1).join(' ').trim();
+                const current = settings.model.current;
+                const available = engine.userDir ? listTextGenPresets(engine.userDir) : [];
+                settings.model.preset_by_model = { ...(settings.model.preset_by_model ?? {}) };
+                if (!name) {
+                    const assigned = settings.model.preset_by_model[current];
+                    return transport.send(chatId,
+                        `Current model: ${current}\nPreset: ${assigned ?? '(engine defaults)'}\n\n` +
+                        (available.length
+                            ? `Available presets (from SillyTavern's Text Completion preset manager):\n${available.map((n) => `- ${n}`).join('\n')}\n\n`
+                            : '(no presets found — import one in SillyTavern: Text Completion → the presets drawer)\n\n') +
+                        'Usage: /model preset <name> — assigns to the current model\n/model preset off — back to engine defaults');
+                }
+                if (name === 'off' || name === 'none') {
+                    delete settings.model.preset_by_model[current];
+                    store.saveSettings(settings);
+                    engine.refreshSettings();
+                    return transport.send(chatId, `Preset cleared for ${current} — engine defaults apply.`);
+                }
+                if (!available.includes(name)) {
+                    return transport.send(chatId, `No preset named "${name}". /model preset lists what's available.`);
+                }
+                settings.model.preset_by_model[current] = name;
+                store.saveSettings(settings);
+                engine.refreshSettings();
+                return transport.send(chatId, `Preset "${name}" assigned to ${current}.`);
+            }
+
             if (sub === 'pull') {
                 const name = args.slice(1).join(' ').trim();
                 if (!name) return transport.send(chatId, 'Usage: /model pull <name>');
@@ -348,7 +379,7 @@ export function createCommandRegistry(ctx) {
                 return;
             }
 
-            await transport.send(chatId, 'Usage: /model [list | use <name> | pull <name> | think <on|off|auto> | temp <n> | samplers [key <n>]]');
+            await transport.send(chatId, 'Usage: /model [list | use <name> | pull <name> | think <on|off|auto> | temp <n> | samplers [key <n>] | preset [name|off]]');
         },
     });
 

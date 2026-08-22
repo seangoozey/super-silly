@@ -30,6 +30,11 @@ export function defaultSettings() {
             top_n_sigma: 1.2,
             xtc_probability: 0.33,
             xtc_threshold: 0.05,
+            // Per-model sampler presets: model name -> SillyTavern Text
+            // Completion preset name (a .json in textgeneration-settings/).
+            // The preset's sampler fields override the defaults above for
+            // that model's generations; editing happens in ST's preset manager.
+            preset_by_model: {},
             // Ollama context window (num_ctx). 0 = Ollama default (4096).
             // Raise to 8192 for long histories — needs VRAM headroom; with an
             // ~18GB Q6_K model on a 24GB card, drop to Q5 first.

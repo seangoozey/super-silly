@@ -3,6 +3,7 @@
 
 import { validateAutolife, normalizeAutolife } from './autolife-schema.js';
 import { saveAutolifeToCharacter } from './card-import.js';
+import { listTextGenPresets } from './presets.js';
 
 function readBody(req) {
     // SillyTavern's global express.json middleware may already have consumed
@@ -43,7 +44,7 @@ const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
  *           addSseClient: (res:object)=>void, restartTransport: ()=>void, log: (m:string)=>void }} deps
  */
 export function registerRoutes(router, deps) {
-    const { engine, store, cards, chatStore, ollama, memory, transport, charactersDir, broadcast, addSseClient, restartTransport, log } = deps;
+    const { engine, store, cards, chatStore, ollama, memory, transport, charactersDir, broadcast, addSseClient, restartTransport, log, userDir } = deps;
 
     /** Persist + broadcast an audit entry from a route action. */
     const audit = (character, kind, text) => {
@@ -326,7 +327,38 @@ export function registerRoutes(router, deps) {
             think: settings.model.think ?? 'off',
             presets: [settings.model.primary, settings.model.fallback].filter(Boolean),
             local,
+            presetAssignments: settings.model.preset_by_model ?? {},
         });
+    }));
+
+    // ---- sampler presets (ST Text Completion preset manager) ----
+    router.get('/presets', wrap(async (req, res) => {
+        const settings = store.loadSettings();
+        res.json({
+            presets: userDir ? listTextGenPresets(userDir) : [],
+            assignments: settings.model.preset_by_model ?? {},
+        });
+    }));
+
+    router.post('/preset/assign', wrap(async (req, res) => {
+        const body = await readBody(req);
+        const model = String(body.model ?? '').trim();
+        const preset = String(body.preset ?? '').trim();
+        if (!model) return res.status(400).json({ error: 'model required' });
+        const settings = store.loadSettings();
+        settings.model.preset_by_model = { ...(settings.model.preset_by_model ?? {}) };
+        if (preset) {
+            const available = userDir ? listTextGenPresets(userDir) : [];
+            if (!available.includes(preset)) return res.status(400).json({ error: `no preset named "${preset}"` });
+            settings.model.preset_by_model[model] = preset;
+            audit(null, 'model', `preset "${preset}" assigned to ${model}`);
+        } else {
+            delete settings.model.preset_by_model[model];
+            audit(null, 'model', `preset assignment cleared for ${model}`);
+        }
+        store.saveSettings(settings);
+        engine.refreshSettings();
+        res.json({ ok: true, assignments: settings.model.preset_by_model });
     }));
 
     router.post('/model/use', wrap(async (req, res) => {

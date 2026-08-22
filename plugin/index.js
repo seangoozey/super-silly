@@ -102,7 +102,7 @@ function addSseClient(res) {
 }
 
 // ---- engine + telegram ----
-const engine = new Engine({ cards, store, chatStore, ollama, memory, log, emit: broadcast });
+const engine = new Engine({ cards, store, chatStore, ollama, memory, log, emit: broadcast, userDir: USER_DIR });
 engine.transports = [];
 
 // One transport per configured bot (the shared "default" bot plus any extra
@@ -182,6 +182,7 @@ async function init(router) {
         memory,
         transport: transportView,
         charactersDir: cards.dir,
+        userDir: USER_DIR,
         broadcast,
         addSseClient,
         restartTransport: startTransport,

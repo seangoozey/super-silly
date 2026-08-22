@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.7';
+const EXT_VERSION = '0.6.8';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -204,7 +204,14 @@ function dashboardHtml() {
                         </select>
                         <label>Context window (num_ctx, 0=default)</label>
                         <input type="number" id="autolife_num_ctx" min="0" max="131072" step="1024" value="0">
+                        <label>Sampler preset (ST Text Completion)</label>
+                        <span>
+                            <select id="autolife_preset_select"></select>
+                            <button type="button" class="menu_button autolife-btn" id="autolife_preset_assign">Assign to current model</button>
+                            <span id="autolife_preset_msg" class="autolife-muted"></span>
+                        </span>
                     </div>
+                    <div class="autolife-muted">Presets come from SillyTavern's Text Completion preset manager (AI → Text Completion → presets drawer) — edit or import them there; the assignment here applies a preset's samplers per model.</div>
                     <div style="margin-top:6px;">
                         <button type="button" class="menu_button autolife-btn" id="autolife_model_use">Use</button>
                         <button type="button" class="menu_button autolife-btn" id="autolife_model_pull">Pull</button>
@@ -1100,7 +1107,21 @@ async function loadModelSection() {
         ];
         $('#autolife_model_select').html(options.map((o) => `<option value="${o.value}" ${o.value === m.current ? 'selected' : ''}>${o.label}</option>`).join(''));
         $('#autolife_think').val(m.think ?? 'off');
+        state.presetAssignments = m.presetAssignments ?? {};
         refreshModelButtons();
+    } catch { /* ignore */ }
+    loadPresetOptions(m.current);
+}
+
+/** Fill the sampler-preset dropdown; marks the current model's assignment. */
+async function loadPresetOptions(currentModel) {
+    try {
+        const p = await api('/presets');
+        const assigned = p.assignments?.[currentModel] ?? '';
+        const opts = ['<option value="">(engine defaults)</option>']
+            .concat((p.presets ?? []).map((n) => `<option value="${n.replace(/"/g, '&quot;')}" ${n === assigned ? 'selected' : ''}>${n}</option>`));
+        $('#autolife_preset_select').html(opts.join(''));
+        state.presetAssignments = p.assignments ?? {};
     } catch { /* ignore */ }
 }
 
@@ -1505,6 +1526,16 @@ function wireEvents() {
             await api('/settings', 'POST', { model: { think } });
             toast(`Thinking set to ${think}`);
         } catch (e) { toast(e.message); }
+    });
+    $('#autolife_preset_assign').on('click', async () => {
+        try {
+            const model = chosenModel();
+            const preset = $('#autolife_preset_select').val() || '';
+            await api('/preset/assign', 'POST', { model, preset });
+            $('#autolife_preset_msg').text('saved ✓');
+            setTimeout(() => $('#autolife_preset_msg').text(''), 4000);
+            loadPresetOptions(model);
+        } catch (e) { $('#autolife_preset_msg').text(e.message); }
     });
 }
 
