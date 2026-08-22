@@ -424,6 +424,26 @@ test('parroted prompt scaffolding is stripped before delivery', async () => {
     assert.ok(h.store.readAudit('Leaky', 50).some((a) => a.kind === 'leak_blocked' && /stripped/.test(a.text)));
 });
 
+test('verbatim self-recitation is rejected and regenerated, not delivered twice', async () => {
+    const card = characterCard('Repeaty');
+    const first = 'just got home from the studio, what are you up to tonight?';
+    // second inbound: the model resends the earlier text word-for-word, then
+    // produces something new on the retry
+    // rng order per inbound: ignore-roll, quick-roll, then a burst probe roll
+    // after a successful generation — so the second inbound starts at value 4
+    const h = buildHarness({ card, rngValues: [0.99, 0.0, 0.99, 0.99, 0.0], reply: [first, first, 'wait, movie night instead? i am picking the film'] });
+    await h.engine.onInbound({ character: 'Repeaty', mes: 'hey you', source: 'telegram' });
+    await h.engine.onInbound({ character: 'Repeaty', mes: 'still there?', source: 'telegram' });
+
+    const sent = h.delivered.filter((d) => !d.text.startsWith('You:'));
+    assert.equal(sent.filter((d) => d.text === first).length, 1, 'the original text is delivered exactly once');
+    assert.ok(sent.some((d) => d.text === 'wait, movie night instead? i am picking the film'), 'the regenerated reply is delivered');
+    const state = stateOf(h.store, 'Repeaty');
+    const msgs = h.chatStore.readMessages('Repeaty', state.chatFile).filter((m) => !m.is_user);
+    assert.equal(msgs.filter((m) => m.mes === first).length, 1, 'the recitation never lands in the chat');
+    assert.ok(h.store.readAudit('Repeaty', 50).some((a) => a.kind === 'repeat_blocked' && /recited/.test(a.text)));
+});
+
 test('evolve: reflection lands pending, approval injects into prompts', async () => {
     const card = characterCard('Grower', { evolve: { enabled: true } });
     const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'I have gotten far more sarcastic with you.' });

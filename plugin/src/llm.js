@@ -531,6 +531,31 @@ export function looksLikeEcho(text, userTexts) {
 }
 
 /**
+ * Detect self-recitation: the character resends its own earlier texts
+ * verbatim — a mid-size-model failure where, with nothing new to say (often
+ * on a follow-up/initiative turn whose context tail is the character's own
+ * last chain), it replays a previous chain word-for-word instead of writing
+ * something new. Random sampling cannot reproduce a multi-text chain, so any
+ * verbatim match here is recitation from context, not coincidence.
+ * Short repeats (haha, ok, u up?) stay allowed — humans do those.
+ * @param {string} text generated output
+ * @param {string[]} ownTexts the character's own recent messages
+ */
+export function looksLikeSelfRepeat(text, ownTexts) {
+    const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const n = norm(text);
+    if (n.length < 15) return false;
+    for (const ot of ownTexts) {
+        const o = norm(ot);
+        if (o.length < 15) continue;
+        if (n === o) return true;
+        if (o.length >= 40 && n.includes(o)) return true; // recited with new padding around it
+        if (n.length >= 40 && o.includes(n) && n.length / o.length > 0.75) return true; // partial resend of a long text
+    }
+    return false;
+}
+
+/**
  * The {follow-up} burst protocol: the model ends a text with {follow-up}
  * when it wants to send another text right away.
  * @returns {{ text: string, more: boolean }} text with the marker removed

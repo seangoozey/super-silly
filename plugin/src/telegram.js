@@ -12,7 +12,7 @@ const AUDIT_GROUPS = {
     pending_fired: 'decisions', catchup: 'decisions', followup: 'decisions',
     initiative_roll: 'decisions', initiative_blocked: 'decisions',
     gen_failed: 'errors', gen_retry: 'errors', gave_up: 'errors',
-    model_fallback: 'errors', echo_blocked: 'errors', leak_blocked: 'errors',
+    model_fallback: 'errors', echo_blocked: 'errors', leak_blocked: 'errors', repeat_blocked: 'errors',
 };
 const AUDIT_LEVELS = {
     full: ['messages', 'decisions', 'errors', 'detail'],

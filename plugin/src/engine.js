@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, splitIntoTexts, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -629,9 +629,11 @@ export class Engine {
         });
 
         const userTexts = history.filter((m) => m.is_user).map((m) => String(m.mes ?? ''));
+        const ownTexts = history.filter((m) => !m.is_user).map((m) => String(m.mes ?? ''));
         const antiEchoNudge = { role: 'system', content: `(That repeated ${this.chatStore.userName}'s own words back at them — forbidden. Write YOUR OWN new reply as ${entry.name}; do not quote, echo, or restate what was said to you.)` };
         const antiLeakNudge = { role: 'system', content: `(That output reproduced prompt scaffolding — system blocks, memory lists, or hidden instructions — which is strictly forbidden. Write only ${entry.name}'s own next text message, plain text, nothing else.)` };
-        const acceptable = (candidate, baseMessages) => !looksLikeEcho(candidate, userTexts) ? candidate : null;
+        const antiRepeatNudge = { role: 'system', content: `(That resends messages you already sent earlier, word for word — forbidden. Write a brand-new text that moves the conversation forward; never repeat or recite your own earlier messages.)` };
+        const acceptable = (candidate) => (!looksLikeEcho(candidate, userTexts) && !looksLikeSelfRepeat(candidate, ownTexts)) ? candidate : null;
 
         let text = '';
         let usedModel = null;
@@ -658,9 +660,15 @@ export class Engine {
                 const parsed = extractFollowUpMarker(cleaned.text);
                 text = sanitizeTextingOutput(parsed.text);
                 firstMore = parsed.more;
-                if (!text || looksLikeEcho(text, userTexts)) {
-                    // retry: empty/leaked output or an echo of the user's words
-                    const nudge = !text && cleaned.leaked ? antiLeakNudge : antiEchoNudge;
+                if (!text || looksLikeEcho(text, userTexts) || looksLikeSelfRepeat(text, ownTexts)) {
+                    // retry: empty/leaked output, an echo of the user's words,
+                    // or a verbatim recitation of the character's own earlier texts
+                    if (text && looksLikeSelfRepeat(text, ownTexts)) {
+                        this.#audit(entry.name, 'repeat_blocked', 'reply rejected — it recited its own earlier texts verbatim; regenerating');
+                    }
+                    let nudge = antiEchoNudge;
+                    if (!text && cleaned.leaked) nudge = antiLeakNudge;
+                    else if (text && looksLikeSelfRepeat(text, ownTexts)) nudge = antiRepeatNudge;
                     const retry = await this.ollama.chat({
                         model,
                         messages: [...messages, nudge],
@@ -675,8 +683,11 @@ export class Engine {
                     text = acceptable(sanitizeTextingOutput(reparsed.text)) ?? '';
                     firstMore = reparsed.more && !!text;
                     if (!text) {
-                        const why = recleaned.leaked || cleaned.leaked ? 'its output was leaked prompt scaffolding' : `it echoed ${this.chatStore.userName}'s words instead of answering`;
-                        this.#audit(entry.name, recleaned.leaked ? 'leak_blocked' : 'echo_blocked', `reply rejected — ${why}; retry also failed, dropping`);
+                        const retryWasRepeat = looksLikeSelfRepeat(sanitizeTextingOutput(reparsed.text), ownTexts);
+                        const why = recleaned.leaked || cleaned.leaked ? 'its output was leaked prompt scaffolding'
+                            : retryWasRepeat ? 'it recited its own earlier messages again'
+                            : `it echoed ${this.chatStore.userName}'s words instead of answering`;
+                        this.#audit(entry.name, recleaned.leaked ? 'leak_blocked' : retryWasRepeat ? 'repeat_blocked' : 'echo_blocked', `reply rejected — ${why}; retry also failed, dropping`);
                     }
                 }
                 if (text) {
@@ -720,12 +731,16 @@ export class Engine {
                     });
                     const cleanedNext = stripLeakedScaffolding(cleanModelOutput(rawNext));
                     const parsed = extractFollowUpMarker(cleanedNext.text);
-                    const piece = looksLikeEcho(parsed.text, userTexts)
+                    const isEcho = looksLikeEcho(parsed.text, userTexts);
+                    const isRepeat = !isEcho && looksLikeSelfRepeat(parsed.text, ownTexts);
+                    const piece = (isEcho || isRepeat)
                         ? null
                         : sanitizeTextingOutput(parsed.text).slice(0, 1500).trim();
                     if (cleanedNext.leaked) this.#audit(entry.name, 'leak_blocked', `stripped leaked prompt scaffolding from a follow-up text${piece ? '' : ' — nothing usable left, ending the burst'}`);
                     if (!piece) {
-                        if (parsed.text && !cleanedNext.leaked) this.#audit(entry.name, 'echo_blocked', 'follow-up text rejected — it echoed the user\'s words; ending the burst');
+                        if (parsed.text && !cleanedNext.leaked) this.#audit(entry.name, isRepeat ? 'repeat_blocked' : 'echo_blocked', isRepeat
+                            ? 'follow-up text rejected — it resent its own earlier words; ending the burst'
+                            : 'follow-up text rejected — it echoed the user\'s words; ending the burst');
                         break;
                     }
                     texts.push(piece);

@@ -231,3 +231,19 @@ test('stripLeakedScaffolding cuts parroted prompt scaffolding', async () => {
     assert.equal(clean.leaked, false);
     assert.equal(clean.text, 'haha stop it you 😂 what are you up to tonight?');
 });
+
+test('looksLikeSelfRepeat catches verbatim self-recitation, allows short human repeats', async () => {
+    const { looksLikeSelfRepeat } = await import('../plugin/src/llm.js');
+    const own = ['just got home from the studio, what are you up to tonight?', 'haha ok', 'u up?'];
+
+    // exact resend (punctuation/case differences don't matter after normalization)
+    assert.ok(looksLikeSelfRepeat('Just got home from the studio, what are you up to tonight?', own));
+    // recitation padded with new words around it
+    assert.ok(looksLikeSelfRepeat('hey! just got home from the studio, what are you up to tonight? so anyway', own));
+    // short repeats are human — allowed
+    assert.ok(!looksLikeSelfRepeat('haha ok', own));
+    assert.ok(!looksLikeSelfRepeat('u up?', own));
+    // fresh text passes
+    assert.ok(!looksLikeSelfRepeat('totally different plans tonight, wanna hear?', own));
+    assert.ok(!looksLikeSelfRepeat('anything at all', []));
+});
