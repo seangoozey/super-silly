@@ -204,3 +204,30 @@ test('prompt templates place sections into placeholders and drop omissions', asy
     assert.ok(sections.life.includes('14:05'));
     assert.equal(sections.personality, 'Personality: warm');
 });
+
+test('stripLeakedScaffolding cuts parroted prompt scaffolding', async () => {
+    const { stripLeakedScaffolding } = await import('../plugin/src/llm.js');
+
+    // the exact observed failure: a fine text with the memory-block header
+    // (and a fabricated [SYSTEM_PROMPT] label) rambling after it
+    const observed = 'omg i had the best day [SYSTEM_PROMPT]Texts from earlier in your history with Sean (your own memories of past exchanges — respond to them if relevant; NEVER quote, repeat, or recite them back): [Aug 22] Hannah: can i do that?[Aug 22';
+    const out = stripLeakedScaffolding(observed);
+    assert.equal(out.leaked, true);
+    assert.equal(out.text, 'omg i had the best day');
+
+    // whole output is scaffolding -> nothing usable, flagged
+    const allLeak = stripLeakedScaffolding('Texts from earlier in your history with Sean:\n[Feb 1] Hannah: hi');
+    assert.equal(allLeak.leaked, true);
+    assert.equal(allLeak.text, '');
+
+    // other marker families
+    assert.equal(stripLeakedScaffolding('sure! [INST] what are you up to').text, 'sure!');
+    assert.equal(stripLeakedScaffolding('hm okay <<sys>> be nice').text, 'hm okay');
+    assert.equal(stripLeakedScaffolding('yeah (Private direction, invisible to Sean: text him now)').text, 'yeah');
+    assert.equal(stripLeakedScaffolding('right Your recent private notes to yourself: nothing').text, 'right');
+
+    // clean texting output passes through untouched
+    const clean = stripLeakedScaffolding('haha stop it you 😂 what are you up to tonight?');
+    assert.equal(clean.leaked, false);
+    assert.equal(clean.text, 'haha stop it you 😂 what are you up to tonight?');
+});

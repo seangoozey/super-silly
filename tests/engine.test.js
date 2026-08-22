@@ -403,6 +403,27 @@ test('echoed user words are rejected and retried, not delivered', async () => {
     assert.ok(!msgs.some((m) => m.mes.includes('italy itinerary')));
 });
 
+test('parroted prompt scaffolding is stripped before delivery', async () => {
+    const card = characterCard('Leaky');
+    // a fine reply with the memory-block header rambling after it (observed
+    // Hannah failure: [SYSTEM_PROMPT] + verbatim memory header + fabricated
+    // entries, truncated mid-ramble by the token cap)
+    const reply = 'omg i had the best day [SYSTEM_PROMPT]Texts from earlier in your history with Sean (your own memories of past exchanges — respond to them if relevant; NEVER quote, repeat, or recite them back): [Aug 22] Hannah: can i do that?[Aug 22';
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply });
+    await h.engine.onInbound({ character: 'Leaky', mes: 'how was your day?', source: 'telegram' });
+
+    // the clean prefix is delivered; none of the scaffolding escapes
+    const sent = h.delivered.filter((d) => !d.text.startsWith('You:'));
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].text, 'omg i had the best day');
+    assert.ok(!sent.some((d) => d.text.includes('SYSTEM_PROMPT') || d.text.includes('Texts from earlier')));
+    const state = stateOf(h.store, 'Leaky');
+    const msgs = h.chatStore.readMessages('Leaky', state.chatFile).filter((m) => !m.is_user);
+    assert.ok(!msgs.some((m) => m.mes.includes('SYSTEM_PROMPT') || m.mes.includes('Texts from earlier')));
+    // and the cut is visible in the audit log
+    assert.ok(h.store.readAudit('Leaky', 50).some((a) => a.kind === 'leak_blocked' && /stripped/.test(a.text)));
+});
+
 test('evolve: reflection lands pending, approval injects into prompts', async () => {
     const card = characterCard('Grower', { evolve: { enabled: true } });
     const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'I have gotten far more sarcastic with you.' });

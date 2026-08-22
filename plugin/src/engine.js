@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, looksLikeEcho, splitIntoTexts, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, splitIntoTexts, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -630,6 +630,7 @@ export class Engine {
 
         const userTexts = history.filter((m) => m.is_user).map((m) => String(m.mes ?? ''));
         const antiEchoNudge = { role: 'system', content: `(That repeated ${this.chatStore.userName}'s own words back at them — forbidden. Write YOUR OWN new reply as ${entry.name}; do not quote, echo, or restate what was said to you.)` };
+        const antiLeakNudge = { role: 'system', content: `(That output reproduced prompt scaffolding — system blocks, memory lists, or hidden instructions — which is strictly forbidden. Write only ${entry.name}'s own next text message, plain text, nothing else.)` };
         const acceptable = (candidate, baseMessages) => !looksLikeEcho(candidate, userTexts) ? candidate : null;
 
         let text = '';
@@ -652,24 +653,30 @@ export class Engine {
                     numCtx,
                     think,
                 });
-                const parsed = extractFollowUpMarker(cleanModelOutput(raw));
+                const cleaned = stripLeakedScaffolding(cleanModelOutput(raw));
+                if (cleaned.leaked) this.#audit(entry.name, 'leak_blocked', 'stripped leaked prompt scaffolding from the reply before sending');
+                const parsed = extractFollowUpMarker(cleaned.text);
                 text = sanitizeTextingOutput(parsed.text);
                 firstMore = parsed.more;
                 if (!text || looksLikeEcho(text, userTexts)) {
-                    // retry: empty output or an echo of the user's words
+                    // retry: empty/leaked output or an echo of the user's words
+                    const nudge = !text && cleaned.leaked ? antiLeakNudge : antiEchoNudge;
                     const retry = await this.ollama.chat({
                         model,
-                        messages: [...messages, antiEchoNudge],
+                        messages: [...messages, nudge],
                         temperature: this.settings.model?.temperature ?? 0.9,
                         numPredict: genNumPredict,
                     numCtx,
-                        think,
+                    think,
                     });
-                    const reparsed = extractFollowUpMarker(cleanModelOutput(retry));
+                    const recleaned = stripLeakedScaffolding(cleanModelOutput(retry));
+                    if (recleaned.leaked) this.#audit(entry.name, 'leak_blocked', 'stripped leaked prompt scaffolding from the retry');
+                    const reparsed = extractFollowUpMarker(recleaned.text);
                     text = acceptable(sanitizeTextingOutput(reparsed.text)) ?? '';
                     firstMore = reparsed.more && !!text;
                     if (!text) {
-                        this.#audit(entry.name, 'echo_blocked', `reply rejected — it echoed ${this.chatStore.userName}'s words instead of answering; retry also failed, dropping`);
+                        const why = recleaned.leaked || cleaned.leaked ? 'its output was leaked prompt scaffolding' : `it echoed ${this.chatStore.userName}'s words instead of answering`;
+                        this.#audit(entry.name, recleaned.leaked ? 'leak_blocked' : 'echo_blocked', `reply rejected — ${why}; retry also failed, dropping`);
                     }
                 }
                 if (text) {
@@ -711,12 +718,14 @@ export class Engine {
                     numCtx,
                         think,
                     });
-                    const parsed = extractFollowUpMarker(cleanModelOutput(rawNext));
+                    const cleanedNext = stripLeakedScaffolding(cleanModelOutput(rawNext));
+                    const parsed = extractFollowUpMarker(cleanedNext.text);
                     const piece = looksLikeEcho(parsed.text, userTexts)
                         ? null
                         : sanitizeTextingOutput(parsed.text).slice(0, 1500).trim();
+                    if (cleanedNext.leaked) this.#audit(entry.name, 'leak_blocked', `stripped leaked prompt scaffolding from a follow-up text${piece ? '' : ' — nothing usable left, ending the burst'}`);
                     if (!piece) {
-                        if (parsed.text) this.#audit(entry.name, 'echo_blocked', 'follow-up text rejected — it echoed the user\'s words; ending the burst');
+                        if (parsed.text && !cleanedNext.leaked) this.#audit(entry.name, 'echo_blocked', 'follow-up text rejected — it echoed the user\'s words; ending the burst');
                         break;
                     }
                     texts.push(piece);
@@ -792,7 +801,9 @@ export class Engine {
                 { role: 'user', content: '(write your private note for right now)' },
             ];
             const raw = await this.ollama.chat({ model, messages, temperature: 0.8, numPredict: 90 });
-            const text = cleanModelOutput(raw);
+            // journal notes get re-injected into future prompts — never let
+            // scaffolding contaminate them or it would compound on every turn
+            const { text } = stripLeakedScaffolding(cleanModelOutput(raw));
             if (!text) return;
             state.journal = [...(state.journal ?? []), { ts: now.toISOString(), text }].slice(-40);
             state.lastJournalAt = now.toISOString();
@@ -827,7 +838,8 @@ export class Engine {
                 temperature: 0.6,
                 numPredict: 120,
             });
-            const text = sanitizeTextingOutput(cleanModelOutput(raw)).slice(0, 400);
+            const { text: cleanText } = stripLeakedScaffolding(cleanModelOutput(raw));
+            const text = sanitizeTextingOutput(cleanText).slice(0, 400);
             if (!text) return null;
             state.evolve = state.evolve ?? { lastReflectAt: null, notes: [] };
             const auto = !!entry.autolife.evolve?.auto_apply;

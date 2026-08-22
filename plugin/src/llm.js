@@ -417,6 +417,46 @@ export function buildJournalPrompt(ctx) {
     ].join(' ');
 }
 
+/**
+ * Prompt scaffolding that must never reach the user: bracketed system labels
+ * the model invents ("[SYSTEM_PROMPT]"), raw instruct-template tokens, and —
+ * the observed failure — verbatim parroting of our own injected headers (the
+ * memory block, journal/evolve sections, engine directives). Everything after
+ * the first marker is hallucinated scaffolding, so we cut there.
+ */
+const LEAK_MARKER_RES = [
+    /\[?\s*system[_ ]?prompt\s*\]?/i,
+    /\[?\s*system\s+(?:message|note|block|instructions)\s*\]?/i,
+    /\[\/?inst\]/i,
+    /<<\s*sys\s*>>/i,
+];
+const LEAK_MARKER_STRINGS = [
+    'Texts from earlier in your history with',          // buildMemoryContext header
+    'Your recent private notes to yourself',            // journal section header
+    "How you've changed since the above was written",   // evolve section header
+    '(Private direction, invisible to',                 // DIRECTIVES prefix
+];
+
+/**
+ * Remove leaked prompt scaffolding from model output.
+ * @returns {{ text: string, leaked: boolean }} text cut at the first marker
+ */
+export function stripLeakedScaffolding(text) {
+    const raw = String(text ?? '');
+    let cutAt = -1;
+    for (const re of LEAK_MARKER_RES) {
+        const m = raw.match(re);
+        if (m && (cutAt < 0 || m.index < cutAt)) cutAt = m.index;
+    }
+    const lower = raw.toLowerCase();
+    for (const s of LEAK_MARKER_STRINGS) {
+        const i = lower.indexOf(s.toLowerCase());
+        if (i >= 0 && (cutAt < 0 || i < cutAt)) cutAt = i;
+    }
+    if (cutAt < 0) return { text: raw, leaked: false };
+    return { text: raw.slice(0, cutAt).trim(), leaked: true };
+}
+
 /** Clean up raw model output into something text-message shaped. */
 export function cleanModelOutput(text) {
     let out = String(text ?? '').trim();
