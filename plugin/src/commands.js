@@ -82,7 +82,7 @@ export function createCommandRegistry(ctx) {
                 '/audit [on [full|normal|min]|off] — engine decisions in chat\n' +
                 '/new — wipe her state and start over (confirm)\n' +
                 '/memory — long-term memory status\n' +
-                '/model — model control (list/use/pull/think)\n' +
+                '/model — model control (list/use/pull/think/temp/samplers)\n' +
                 '/upload — attach a character card (.png/.json) to import it\n\n' +
                 'Then just text them like a real person. They might reply instantly… or a while later. Or be asleep.');
         },
@@ -242,7 +242,7 @@ export function createCommandRegistry(ctx) {
 
     register({
         name: 'model',
-        help: 'model control: /model [list | use <name> | pull <name>]',
+        help: 'model control: /model [list | use <name> | pull <name> | think | temp | samplers]',
         run: async (chatId, args) => {
             const sub = (args[0] ?? '').toLowerCase();
             const settings = store.loadSettings();
@@ -293,6 +293,43 @@ export function createCommandRegistry(ctx) {
                 return transport.send(chatId, `Thinking set to ${mode}.`);
             }
 
+            if (sub === 'temp') {
+                const v = Number(args[1]);
+                if (!(v > 0 && v <= 2)) {
+                    return transport.send(chatId,
+                        `Temperature is currently: ${settings.model.temperature ?? 0.7}\n` +
+                        'Usage: /model temp <0.1-2>\n' +
+                        'ReadyArt recommends 0.7 for the Dark models; lower = more predictable, higher = more chaotic.');
+                }
+                settings.model.temperature = v;
+                store.saveSettings(settings);
+                engine.refreshSettings();
+                return transport.send(chatId, `Temperature set to ${v}.`);
+            }
+
+            if (sub === 'samplers') {
+                const keyMap = { top_p: 'top_p', top_k: 'top_k', rep_pen: 'repeat_penalty', repeat_penalty: 'repeat_penalty' };
+                const m = settings.model;
+                const key = keyMap[(args[1] ?? '').toLowerCase()];
+                if (key) {
+                    const v = Number(args[2]);
+                    if (!(v >= 0)) return transport.send(chatId, `Usage: /model samplers ${args[1]} <number>`);
+                    m[key] = v;
+                    store.saveSettings(settings);
+                    engine.refreshSettings();
+                    return transport.send(chatId, `${key} set to ${v}.`);
+                }
+                return transport.send(chatId,
+                    `Samplers:\n` +
+                    `- temperature: ${m.temperature ?? 0.7}\n` +
+                    `- top_p: ${m.top_p ?? 1} (1 = off)\n` +
+                    `- top_k: ${m.top_k ?? 0} (0 = off)\n` +
+                    `- repeat_penalty: ${m.repeat_penalty ?? 1} (1 = off)\n\n` +
+                    'Usage: /model samplers <top_p|top_k|rep_pen> <value>\n' +
+                    'Defaults follow ReadyArt\'s spec (0.7 with everything neutral). ' +
+                    'top_n_sigma and XTC from that spec are not available through Ollama.');
+            }
+
             if (sub === 'pull') {
                 const name = args.slice(1).join(' ').trim();
                 if (!name) return transport.send(chatId, 'Usage: /model pull <name>');
@@ -303,7 +340,7 @@ export function createCommandRegistry(ctx) {
                 return;
             }
 
-            await transport.send(chatId, 'Usage: /model [list | use <name> | pull <name>]');
+            await transport.send(chatId, 'Usage: /model [list | use <name> | pull <name> | think <on|off|auto> | temp <n> | samplers [key <n>]]');
         },
     });
 

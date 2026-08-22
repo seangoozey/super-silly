@@ -247,3 +247,28 @@ test('looksLikeSelfRepeat catches verbatim self-recitation, allows short human r
     assert.ok(!looksLikeSelfRepeat('totally different plans tonight, wanna hear?', own));
     assert.ok(!looksLikeSelfRepeat('anything at all', []));
 });
+
+test('OllamaClient chat applies sampler defaults and per-request overrides', async () => {
+    const bodies = [];
+    const ok = () => new Response(JSON.stringify({ message: { content: 'hi' } }), { status: 200 });
+    const client = new OllamaClient({ fetchImpl: async (url, opts) => { bodies.push(JSON.parse(opts.body)); return ok(); } });
+
+    // no sampler set: only temperature default, Ollama's own defaults left alone
+    await client.chat({ model: 'm', messages: [], temperature: 0.5 });
+    assert.equal(bodies[0].options.temperature, 0.5);
+    assert.ok(!('top_p' in bodies[0].options));
+    assert.ok(!('top_k' in bodies[0].options));
+    assert.ok(!('repeat_penalty' in bodies[0].options));
+
+    // ReadyArt-spec samplers: everything explicit and neutral
+    client.samplers = { temperature: 0.7, top_p: 1, top_k: 0, repeat_penalty: 1 };
+    await client.chat({ model: 'm', messages: [] });
+    assert.equal(bodies[1].options.temperature, 0.7);
+    assert.equal(bodies[1].options.top_p, 1);
+    assert.equal(bodies[1].options.top_k, 0);
+    assert.equal(bodies[1].options.repeat_penalty, 1);
+
+    // per-request temperature (journal 0.8 / evolve 0.6) still wins
+    await client.chat({ model: 'm', messages: [], temperature: 0.6 });
+    assert.equal(bodies[2].options.temperature, 0.6);
+});

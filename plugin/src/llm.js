@@ -58,6 +58,9 @@ export class OllamaClient {
         this.fetchImpl = opts.fetchImpl ?? fetch;
         this.timeoutMs = opts.timeoutMs ?? 300_000;
         this.log = opts.log ?? (() => {});
+        // default sampler set (temperature/top_p/top_k/repeat_penalty) the
+        // engine keeps in sync with settings; per-request values still win
+        this.samplers = opts.samplers ?? null;
     }
 
     async version() {
@@ -191,6 +194,7 @@ export class OllamaClient {
             signal: this._signal(this.timeoutMs),
         });
 
+        const s = this.samplers ?? {};
         const body = {
             model: req.model,
             messages: req.messages,
@@ -199,9 +203,14 @@ export class OllamaClient {
             // arbitrary hours and reloading 17GB from disk on the P40 is brutal
             keep_alive: req.keepAlive ?? -1,
             options: {
-                temperature: req.temperature ?? 0.9,
+                temperature: req.temperature ?? s.temperature ?? 0.7,
                 num_predict: req.numPredict ?? 160,
                 ...(req.numCtx && req.numCtx > 0 ? { num_ctx: req.numCtx } : {}),
+                // neutral-by-default sampler overrides (ReadyArt spec): sent
+                // explicitly so Ollama's own defaults don't silently apply
+                ...(Number(s.top_p) > 0 && Number(s.top_p) <= 1 ? { top_p: Number(s.top_p) } : {}),
+                ...(Number.isFinite(Number(s.top_k)) && Number(s.top_k) >= 0 ? { top_k: Number(s.top_k) } : {}),
+                ...(Number(s.repeat_penalty) > 0 ? { repeat_penalty: Number(s.repeat_penalty) } : {}),
             },
         };
         if (req.think === 'on') body.think = true;

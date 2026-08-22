@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.5';
+const EXT_VERSION = '0.6.6';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -124,6 +124,15 @@ function dashboardHtml() {
                         <label>Your name (as characters see you)</label>
                         <span><input type="text" id="autolife_persona_name" placeholder="auto — your default ST persona">
                         <button type="button" class="menu_button autolife-btn" id="autolife_persona_save">Save</button></span>
+                        <label>Samplers — temp / top_p / top_k / rep_pen</label>
+                        <span>
+                            <input type="text" id="autolife_samplers_temp" style="width:52px" placeholder="0.7"> /
+                            <input type="text" id="autolife_samplers_top_p" style="width:52px" placeholder="1"> /
+                            <input type="text" id="autolife_samplers_top_k" style="width:52px" placeholder="0"> /
+                            <input type="text" id="autolife_samplers_rep_pen" style="width:52px" placeholder="1">
+                            <button type="button" class="menu_button autolife-btn" id="autolife_samplers_save">Save</button>
+                            <span id="autolife_samplers_msg" class="autolife-muted"></span>
+                        </span>
                         <label>Availability shapes tone</label>
                         <input type="checkbox" id="autolife_availability_tone" checked>
                         <label>Relationship speeds replies</label>
@@ -1035,6 +1044,10 @@ async function loadTelegramSection() {
     try {
         const { settings } = await api('/settings');
         $('#autolife_persona_name').val(settings.persona?.name ?? '');
+        $('#autolife_samplers_temp').val(settings.model?.temperature ?? 0.7);
+        $('#autolife_samplers_top_p').val(settings.model?.top_p ?? 1);
+        $('#autolife_samplers_top_k').val(settings.model?.top_k ?? 0);
+        $('#autolife_samplers_rep_pen').val(settings.model?.repeat_penalty ?? 1);
         $('#autolife_prompt_global').val(settings.prompt?.template ?? '');
         $('#autolife_availability_tone').prop('checked', settings.engine?.availability_tone !== false);
         $('#autolife_relationship_speed').prop('checked', settings.engine?.relationship_speed !== false);
@@ -1410,6 +1423,26 @@ function wireEvents() {
             toast('Name saved — characters will use it from their next message');
             refreshStatus();
         } catch (e) { toast(e.message); }
+    });
+
+    $('#autolife_samplers_save').on('click', async () => {
+        const num = (sel, fallback) => {
+            const v = Number($(sel).val());
+            return Number.isFinite(v) ? v : fallback;
+        };
+        try {
+            await api('/settings', 'POST', {
+                model: {
+                    temperature: num('#autolife_samplers_temp', 0.7),
+                    top_p: num('#autolife_samplers_top_p', 1),
+                    top_k: num('#autolife_samplers_top_k', 0),
+                    repeat_penalty: num('#autolife_samplers_rep_pen', 1),
+                },
+            });
+            $('#autolife_samplers_msg').text('saved ✓');
+            refreshStatus();
+        } catch (e) { $('#autolife_samplers_msg').text(e.message); }
+        setTimeout(() => $('#autolife_samplers_msg').text(''), 4000);
     });
 
     $('#autolife_tg_save').on('click', async () => {

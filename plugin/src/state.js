@@ -14,7 +14,15 @@ export function defaultSettings() {
             primary: DEFAULT_PRIMARY,
             fallback: DEFAULT_FALLBACK,
             current: DEFAULT_PRIMARY,
-            temperature: 0.9,
+            // Sampler spec follows ReadyArt's Qwen3 build recommendation:
+            // temp 0.7 with everything else neutral. Sent explicitly because
+            // Ollama otherwise applies its own defaults (temp 0.8, top_p 0.9,
+            // top_k 40, repeat_penalty 1.1). The spec's top_n_sigma and XTC
+            // samplers are not exposed through Ollama and are skipped.
+            temperature: 0.7,
+            top_p: 1,          // 1 = off
+            top_k: 0,          // 0 = off
+            repeat_penalty: 1, // 1 = off
             // Ollama context window (num_ctx). 0 = Ollama default (4096).
             // Raise to 8192 for long histories — needs VRAM headroom; with an
             // ~18GB Q6_K model on a 24GB card, drop to Q5 first.

@@ -43,6 +43,17 @@ export class Engine {
     refreshSettings() {
         this.settings = this.store.loadSettings();
         this.#applyUserName();
+        // keep the Ollama client's sampler defaults in sync with settings so
+        // every chat call (replies, bursts, journal, evolve) uses them
+        const m = this.settings.model ?? {};
+        if (this.ollama && typeof this.ollama === 'object') {
+            this.ollama.samplers = {
+                temperature: Number(m.temperature) > 0 ? Number(m.temperature) : 0.7,
+                top_p: Number(m.top_p) > 0 && Number(m.top_p) <= 1 ? Number(m.top_p) : 1,
+                top_k: Number.isFinite(Number(m.top_k)) && Number(m.top_k) >= 0 ? Number(m.top_k) : 0,
+                repeat_penalty: Number(m.repeat_penalty) > 0 ? Number(m.repeat_penalty) : 1,
+            };
+        }
     }
 
     /**
@@ -650,7 +661,6 @@ export class Engine {
                 const raw = await this.ollama.chat({
                     model,
                     messages,
-                    temperature: this.settings.model?.temperature ?? 0.9,
                     numPredict: genNumPredict,
                     numCtx,
                     think,
@@ -672,7 +682,6 @@ export class Engine {
                     const retry = await this.ollama.chat({
                         model,
                         messages: [...messages, nudge],
-                        temperature: this.settings.model?.temperature ?? 0.9,
                         numPredict: genNumPredict,
                     numCtx,
                     think,
@@ -724,7 +733,6 @@ export class Engine {
                             role: 'system',
                             content: `(You just sent that text moments ago and naturally have more to say. Send exactly ONE more short text now — plain text only. End with {follow-up} ONLY if you genuinely have yet another text after this one; otherwise no marker.)`,
                         }],
-                        temperature: this.settings.model?.temperature ?? 0.9,
                         numPredict: genNumPredict,
                     numCtx,
                         think,
