@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { listTextGenPresets, loadPreset, presetToSamplers } from '../plugin/src/presets.js';
+import { fileURLToPath } from 'node:url';
 import { characterCard, buildHarness } from './helpers.js';
 
 function tmpUserDir() {
@@ -106,4 +107,27 @@ test('engine without an assignment sends no preset samplers', async () => {
     await h.engine.onInbound({ character: 'Plain', mes: 'hi', source: 'telegram' });
     assert.ok(h.chatReqs.length > 0);
     assert.ok(!h.chatReqs[0].samplers, 'no preset override');
+});
+
+test('shipped preset files map cleanly (Scarlett card values; Desires full spec)', async () => {
+    const { presetToSamplers: map } = await import('../plugin/src/presets.js');
+    const repoPresets = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'presets');
+    const read = (f) => JSON.parse(fs.readFileSync(path.join(repoPresets, f), 'utf8'));
+
+    const scarlett = map(read('ReadyArt Dark-Scarlett-27B.json'));
+    assert.equal(scarlett.temperature, 1.0);
+    assert.equal(scarlett.top_p, 0.92);
+    assert.equal(scarlett.top_k, 0);
+    assert.equal(scarlett.repeat_penalty, 1);
+    assert.equal(scarlett.frequency_penalty, undefined, 'zero penalties map to nothing sent');
+    assert.equal(scarlett.presence_penalty, undefined);
+    assert.equal(scarlett.top_n_sigma, 0, 'sigma explicitly off — engine default must NOT leak in');
+    assert.equal(scarlett.xtc_probability, 0, 'XTC explicitly off');
+
+    const desires = map(read('ReadyArt Dark-Desires.json'));
+    assert.equal(desires.temperature, 0.7);
+    assert.equal(desires.top_p, 1);
+    assert.equal(desires.top_n_sigma, 1.2);
+    assert.equal(desires.xtc_probability, 0.33);
+    assert.equal(desires.xtc_threshold, 0.05);
 });

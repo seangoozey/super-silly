@@ -419,6 +419,8 @@ export class LlamaCppClient {
             ...(Number(s.top_p) > 0 && Number(s.top_p) <= 1 ? { top_p: Number(s.top_p) } : {}),
             ...(Number(s.top_k) >= 0 ? { top_k: Number(s.top_k) } : {}),
             ...(Number(s.repeat_penalty) > 0 ? { repeat_penalty: Number(s.repeat_penalty) } : {}),
+            ...(Number(s.frequency_penalty) ? { frequency_penalty: Number(s.frequency_penalty) } : {}),
+            ...(Number(s.presence_penalty) ? { presence_penalty: Number(s.presence_penalty) } : {}),
             // llama.cpp-exclusive samplers from ReadyArt's full spec
             ...(Number(s.top_n_sigma) > 0 ? { top_n_sigma: Number(s.top_n_sigma) } : {}),
             ...(Number(s.xtc_probability) > 0

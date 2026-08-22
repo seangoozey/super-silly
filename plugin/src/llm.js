@@ -214,6 +214,8 @@ export class OllamaClient {
                 ...(Number.isFinite(Number(s.top_k)) && Number(s.top_k) >= 0 ? { top_k: Number(s.top_k) } : {}),
                 ...(Number(s.repeat_penalty) > 0 ? { repeat_penalty: Number(s.repeat_penalty) } : {}),
                 ...(Number(s.min_p) > 0 && Number(s.min_p) <= 1 ? { min_p: Number(s.min_p) } : {}),
+                ...(Number(s.frequency_penalty) ? { frequency_penalty: Number(s.frequency_penalty) } : {}),
+                ...(Number(s.presence_penalty) ? { presence_penalty: Number(s.presence_penalty) } : {}),
             },
         };
         if (req.think === 'on') body.think = true;

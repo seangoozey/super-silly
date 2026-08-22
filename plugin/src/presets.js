@@ -60,11 +60,14 @@ export function presetToSamplers(preset) {
     };
     const out = {};
     const set = (key, v) => { if (v !== null) out[key] = v; };
+    const penalty = (v) => (v === null || v === 0 ? null : Math.max(-2, Math.min(2, v)));
     set('temperature', pick('temp', 'temperature'));
     set('top_p', pick('top_p'));
     set('top_k', pick('top_k'));
     set('min_p', pick('min_p'));
     set('repeat_penalty', pick('rep_pen', 'repeat_penalty'));
+    set('frequency_penalty', penalty(pick('freq_pen', 'frequency_penalty')));
+    set('presence_penalty', penalty(pick('presence_pen', 'presence_penalty')));
     set('top_n_sigma', pick('nsigma', 'top_n_sigma'));
     set('xtc_probability', pick('xtc_probability'));
     set('xtc_threshold', pick('xtc_threshold'));
