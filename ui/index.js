@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.6';
+const EXT_VERSION = '0.6.7';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -132,6 +132,13 @@ function dashboardHtml() {
                             <input type="text" id="autolife_samplers_rep_pen" style="width:52px" placeholder="1">
                             <button type="button" class="menu_button autolife-btn" id="autolife_samplers_save">Save</button>
                             <span id="autolife_samplers_msg" class="autolife-muted"></span>
+                        </span>
+                        <label>llama.cpp samplers — top_n_sigma / xtc_prob / xtc_thresh</label>
+                        <span>
+                            <input type="text" id="autolife_samplers_nsigma" style="width:52px" placeholder="1.2"> /
+                            <input type="text" id="autolife_samplers_xtc_p" style="width:52px" placeholder="0.33"> /
+                            <input type="text" id="autolife_samplers_xtc_t" style="width:52px" placeholder="0.05">
+                            <span class="autolife-muted">ReadyArt's full recipe (0 = off); Ollama ignores these</span>
                         </span>
                         <label>Availability shapes tone</label>
                         <input type="checkbox" id="autolife_availability_tone" checked>
@@ -1048,6 +1055,9 @@ async function loadTelegramSection() {
         $('#autolife_samplers_top_p').val(settings.model?.top_p ?? 1);
         $('#autolife_samplers_top_k').val(settings.model?.top_k ?? 0);
         $('#autolife_samplers_rep_pen').val(settings.model?.repeat_penalty ?? 1);
+        $('#autolife_samplers_nsigma').val(settings.model?.top_n_sigma ?? 1.2);
+        $('#autolife_samplers_xtc_p').val(settings.model?.xtc_probability ?? 0.33);
+        $('#autolife_samplers_xtc_t').val(settings.model?.xtc_threshold ?? 0.05);
         $('#autolife_prompt_global').val(settings.prompt?.template ?? '');
         $('#autolife_availability_tone').prop('checked', settings.engine?.availability_tone !== false);
         $('#autolife_relationship_speed').prop('checked', settings.engine?.relationship_speed !== false);
@@ -1437,6 +1447,9 @@ function wireEvents() {
                     top_p: num('#autolife_samplers_top_p', 1),
                     top_k: num('#autolife_samplers_top_k', 0),
                     repeat_penalty: num('#autolife_samplers_rep_pen', 1),
+                    top_n_sigma: num('#autolife_samplers_nsigma', 1.2),
+                    xtc_probability: num('#autolife_samplers_xtc_p', 0.33),
+                    xtc_threshold: num('#autolife_samplers_xtc_t', 0.05),
                 },
             });
             $('#autolife_samplers_msg').text('saved ✓');

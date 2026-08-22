@@ -147,7 +147,7 @@ test('LlamaCppClient chat maps the request to OpenAI dialect and parses choices'
         log: () => {},
     });
     const client = new LlamaCppClient({ manager: mgr, fetchImpl: mgr.fetchImpl, log: () => {} });
-    client.samplers = { temperature: 0.7, top_p: 1, top_k: 0, repeat_penalty: 1 };
+    client.samplers = { temperature: 0.7, top_p: 1, top_k: 0, repeat_penalty: 1, top_n_sigma: 1.2, xtc_probability: 0.33, xtc_threshold: 0.05 };
 
     const out = await client.chat({ model, messages: [{ role: 'user', content: 'hi' }], numPredict: 220 });
     assert.equal(out, 'hey there');
@@ -158,6 +158,18 @@ test('LlamaCppClient chat maps the request to OpenAI dialect and parses choices'
     assert.equal(req.body.top_k, 0);
     assert.equal(req.body.repeat_penalty, 1);
     assert.equal(req.body.stream, false);
+    // ReadyArt's llama.cpp-exclusive samplers ride along
+    assert.equal(req.body.top_n_sigma, 1.2);
+    assert.equal(req.body.xtc_probability, 0.33);
+    assert.equal(req.body.xtc_threshold, 0.05);
+
+    // zeros disable them: fields absent from the request entirely
+    client.samplers = { temperature: 0.7, top_n_sigma: 0, xtc_probability: 0 };
+    await client.chat({ model, messages: [{ role: 'user', content: 'again' }] });
+    const req2 = bodies.filter((b) => b.url.includes('/chat/completions')).at(-1);
+    assert.ok(!('top_n_sigma' in req2.body));
+    assert.ok(!('xtc_probability' in req2.body));
+    assert.ok(!('xtc_threshold' in req2.body));
 });
 
 test('LlamaCppClient chat rejects non-hf model names and missing files with clear errors', async () => {

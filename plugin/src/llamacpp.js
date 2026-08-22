@@ -416,6 +416,14 @@ export class LlamaCppClient {
             ...(Number(s.top_p) > 0 && Number(s.top_p) <= 1 ? { top_p: Number(s.top_p) } : {}),
             ...(Number(s.top_k) >= 0 ? { top_k: Number(s.top_k) } : {}),
             ...(Number(s.repeat_penalty) > 0 ? { repeat_penalty: Number(s.repeat_penalty) } : {}),
+            // llama.cpp-exclusive samplers from ReadyArt's full spec
+            ...(Number(s.top_n_sigma) > 0 ? { top_n_sigma: Number(s.top_n_sigma) } : {}),
+            ...(Number(s.xtc_probability) > 0
+                ? {
+                    xtc_probability: Number(s.xtc_probability),
+                    xtc_threshold: Number(s.xtc_threshold) > 0 ? Number(s.xtc_threshold) : 0.05,
+                }
+                : {}),
             // Qwen-family thinking toggle ('auto' leaves the template default)
             ...(req.think === 'on' || req.think === 'off'
                 ? { chat_template_kwargs: { enable_thinking: req.think === 'on' } }

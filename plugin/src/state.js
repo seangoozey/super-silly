@@ -23,6 +23,13 @@ export function defaultSettings() {
             top_p: 1,          // 1 = off
             top_k: 0,          // 0 = off
             repeat_penalty: 1, // 1 = off
+            // llama.cpp-only samplers (the Ollama backend ignores these):
+            // ReadyArt's full recipe — top_n_sigma prunes candidates
+            // adaptively per token, XTC occasionally excludes the model's
+            // top choices for livelier output. 0 disables either.
+            top_n_sigma: 1.2,
+            xtc_probability: 0.33,
+            xtc_threshold: 0.05,
             // Ollama context window (num_ctx). 0 = Ollama default (4096).
             // Raise to 8192 for long histories — needs VRAM headroom; with an
             // ~18GB Q6_K model on a 24GB card, drop to Q5 first.

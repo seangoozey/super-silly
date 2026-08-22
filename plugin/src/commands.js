@@ -308,7 +308,13 @@ export function createCommandRegistry(ctx) {
             }
 
             if (sub === 'samplers') {
-                const keyMap = { top_p: 'top_p', top_k: 'top_k', rep_pen: 'repeat_penalty', repeat_penalty: 'repeat_penalty' };
+                const keyMap = {
+                    top_p: 'top_p', top_k: 'top_k',
+                    rep_pen: 'repeat_penalty', repeat_penalty: 'repeat_penalty',
+                    nsigma: 'top_n_sigma', top_n_sigma: 'top_n_sigma',
+                    xtc_p: 'xtc_probability', xtc_prob: 'xtc_probability', xtc_probability: 'xtc_probability',
+                    xtc_t: 'xtc_threshold', xtc_thresh: 'xtc_threshold', xtc_threshold: 'xtc_threshold',
+                };
                 const m = settings.model;
                 const key = keyMap[(args[1] ?? '').toLowerCase()];
                 if (key) {
@@ -324,10 +330,12 @@ export function createCommandRegistry(ctx) {
                     `- temperature: ${m.temperature ?? 0.7}\n` +
                     `- top_p: ${m.top_p ?? 1} (1 = off)\n` +
                     `- top_k: ${m.top_k ?? 0} (0 = off)\n` +
-                    `- repeat_penalty: ${m.repeat_penalty ?? 1} (1 = off)\n\n` +
-                    'Usage: /model samplers <top_p|top_k|rep_pen> <value>\n' +
-                    'Defaults follow ReadyArt\'s spec (0.7 with everything neutral). ' +
-                    'top_n_sigma and XTC from that spec are not available through Ollama.');
+                    `- repeat_penalty: ${m.repeat_penalty ?? 1} (1 = off)\n` +
+                    `- top_n_sigma: ${m.top_n_sigma ?? 1.2} (0 = off)\n` +
+                    `- xtc_probability: ${m.xtc_probability ?? 0.33} (0 = off)\n` +
+                    `- xtc_threshold: ${m.xtc_threshold ?? 0.05}\n\n` +
+                    'Usage: /model samplers <top_p|top_k|rep_pen|nsigma|xtc_p|xtc_t> <value> (temp: /model temp <n>)\n' +
+                    'Defaults follow ReadyArt\'s full spec. nsigma + XTC apply on the llama.cpp backend only.');
             }
 
             if (sub === 'pull') {

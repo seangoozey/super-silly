@@ -52,6 +52,10 @@ export class Engine {
                 top_p: Number(m.top_p) > 0 && Number(m.top_p) <= 1 ? Number(m.top_p) : 1,
                 top_k: Number.isFinite(Number(m.top_k)) && Number(m.top_k) >= 0 ? Number(m.top_k) : 0,
                 repeat_penalty: Number(m.repeat_penalty) > 0 ? Number(m.repeat_penalty) : 1,
+                // llama.cpp-only (0 = explicitly off, so ?? keeps user zeros)
+                top_n_sigma: m.top_n_sigma ?? 1.2,
+                xtc_probability: m.xtc_probability ?? 0.33,
+                xtc_threshold: m.xtc_threshold ?? 0.05,
             };
             // llama.cpp backend: context window is a server-launch flag
             if (this.ollama.manager) this.ollama.manager.numCtx = Number(m.num_ctx) > 0 ? Number(m.num_ctx) : 8192;
