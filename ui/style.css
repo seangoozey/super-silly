@@ -247,14 +247,10 @@
 
 /* ---- full-screen dashboard + top bar button ---- */
 
-#autolife_top_button {
-    cursor: pointer;
-    padding: 0 8px;
-    opacity: 0.75;
-}
-
-#autolife_top_button:hover {
-    opacity: 1;
+/* Native-feeling top bar icon: .drawer-icon gives size/cursor/hover-dim; we
+   only add spacing so it matches its neighbors in #top-bar. */
+#top-bar #autolife_top_button {
+    margin: 0 2px;
 }
 
 .autolife-dashboard {

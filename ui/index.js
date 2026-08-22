@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.3';
+const EXT_VERSION = '0.6.4';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -1540,7 +1540,7 @@ jQuery(() => {
         // top-bar button (self-healing alongside the dashboard)
         const injectTopButton = () => {
             if ($('#autolife_top_button').length || !$('#top-bar').length) return;
-            $('#top-bar').append('<div id="autolife_top_button" class="fa-solid fa-heart-pulse" title="Autolife dashboard"></div>');
+            $('#top-bar').append('<div id="autolife_top_button" class="drawer-icon fa-solid fa-heart-pulse fa-fw closedIcon" title="Autolife dashboard"></div>');
         };
         injectTopButton();
         setInterval(injectTopButton, 5000); // re-inject if ST rebuilds the top bar
