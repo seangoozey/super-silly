@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.4';
+const EXT_VERSION = '0.6.5';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -1538,9 +1538,14 @@ jQuery(() => {
         $('body').append(dashboardHtml());
 
         // top-bar button (self-healing alongside the dashboard)
+        // Top bar button: lives in the RIGHT drawer-toggle cluster next to the
+        // native icons. #top-bar itself sits UNDER #top-settings-holder
+        // (z-index 3005) — icons appended there look right but can't be clicked.
         const injectTopButton = () => {
-            if ($('#autolife_top_button').length || !$('#top-bar').length) return;
-            $('#top-bar').append('<div id="autolife_top_button" class="drawer-icon fa-solid fa-heart-pulse fa-fw closedIcon" title="Autolife dashboard"></div>');
+            if ($('#autolife_top_button').length) return;
+            const host = $('#unimportantYes').length ? $('#unimportantYes') : ($('#rightNavDrawerIcon').parent().length ? $('#rightNavDrawerIcon').parent() : $('#top-bar'));
+            if (!host.length) return;
+            host.append('<div id="autolife_top_button" class="drawer-icon fa-solid fa-heart-pulse fa-fw closedIcon" title="Autolife dashboard"></div>');
         };
         injectTopButton();
         setInterval(injectTopButton, 5000); // re-inject if ST rebuilds the top bar
