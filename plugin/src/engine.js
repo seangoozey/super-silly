@@ -823,7 +823,7 @@ export class Engine {
                 ...history,
                 { role: 'user', content: '(write your private note for right now)' },
             ];
-            const raw = await this.ollama.chat({ model, messages, temperature: 0.8, numPredict: 90 });
+            const raw = await this.ollama.chat({ model, messages, numPredict: 90 });
             // journal notes get re-injected into future prompts — never let
             // scaffolding contaminate them or it would compound on every turn
             const { text } = stripLeakedScaffolding(cleanModelOutput(raw));
