@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01 } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, splitIntoTexts, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, looksLikeEcho, splitIntoTexts, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -546,6 +546,10 @@ export class Engine {
             extra: extra?.system,
         });
 
+        const userTexts = history.filter((m) => m.is_user).map((m) => String(m.mes ?? ''));
+        const antiEchoNudge = { role: 'system', content: `(That repeated ${this.chatStore.userName}'s own words back at them — forbidden. Write YOUR OWN new reply as ${entry.name}; do not quote, echo, or restate what was said to you.)` };
+        const acceptable = (candidate, baseMessages) => !looksLikeEcho(candidate, userTexts) ? candidate : null;
+
         let text = '';
         let usedModel = null;
         let firstMore = false;
@@ -568,18 +572,21 @@ export class Engine {
                 const parsed = extractFollowUpMarker(cleanModelOutput(raw));
                 text = sanitizeTextingOutput(parsed.text);
                 firstMore = parsed.more;
-                if (!text) {
-                    // one nudge retry — models occasionally answer with empty strings
+                if (!text || looksLikeEcho(text, userTexts)) {
+                    // retry: empty output or an echo of the user's words
                     const retry = await this.ollama.chat({
                         model,
-                        messages: [...messages, { role: 'system', content: '(Your last reply was empty or contained no message text. Send the actual text message now — plain words only, no formatting.)' }],
+                        messages: [...messages, antiEchoNudge],
                         temperature: this.settings.model?.temperature ?? 0.9,
                         numPredict: genNumPredict,
                         think,
                     });
                     const reparsed = extractFollowUpMarker(cleanModelOutput(retry));
-                    text = sanitizeTextingOutput(reparsed.text);
-                    firstMore = reparsed.more;
+                    text = acceptable(sanitizeTextingOutput(reparsed.text)) ?? '';
+                    firstMore = reparsed.more && !!text;
+                    if (!text) {
+                        this.#audit(entry.name, 'echo_blocked', `reply rejected — it echoed ${this.chatStore.userName}'s words instead of answering; retry also failed, dropping`);
+                    }
                 }
                 if (text) {
                     usedModel = model;
@@ -620,8 +627,13 @@ export class Engine {
                         think,
                     });
                     const parsed = extractFollowUpMarker(cleanModelOutput(rawNext));
-                    const piece = sanitizeTextingOutput(parsed.text).slice(0, 1500).trim();
-                    if (!piece) break;
+                    const piece = looksLikeEcho(parsed.text, userTexts)
+                        ? null
+                        : sanitizeTextingOutput(parsed.text).slice(0, 1500).trim();
+                    if (!piece) {
+                        if (parsed.text) this.#audit(entry.name, 'echo_blocked', 'follow-up text rejected — it echoed the user\'s words; ending the burst');
+                        break;
+                    }
                     texts.push(piece);
                     burstMessages = [...burstMessages, { role: 'assistant', content: piece }];
                     if (!parsed.more) break;

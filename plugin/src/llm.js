@@ -311,7 +311,7 @@ export function promptSections(ctx) {
         sections.journal = null;
     }
 
-    sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions, no quotation marks around the message.`
+    sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions, no quotation marks around the message. Never quote, repeat, or echo ${ctx.userName}'s words back to them — always write your own new words.`
         + ' If you want to send another text right away, end your message with {follow-up} — otherwise never write that marker.';
     sections.postHistory = data.post_history_instructions?.trim() ? `Additional standing instructions: ${sub(data.post_history_instructions)}` : null;
 
@@ -348,7 +348,7 @@ export function buildMemoryContext(hits, userName, characterName) {
         return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     };
     const lines = hits.map((h) => `[${fmt(h.ts)}] ${h.role === 'user' ? userName : characterName}: ${String(h.text).slice(0, 300)}`);
-    return `Texts from earlier in your history with ${userName} (from your own memory — weave them in naturally if relevant, never recite or mention having a memory):\n${lines.join('\n')}`;
+    return `Texts from earlier in your history with ${userName} (your own memories of past exchanges — respond to them if relevant; NEVER quote, repeat, or recite them back):\n${lines.join('\n')}`;
 }
 
 /**
@@ -414,6 +414,8 @@ export function sanitizeTextingOutput(text) {
     let out = String(text ?? '');
     // bracketed meta lines, e.g. [Continue...], (OOC: ...)
     out = out.replace(/^\s*[\[(]\s*(continue|ooc|note|system|assistant)[^)\]]*[\])]\s*$/gim, '');
+    // quote-style echo lines ("> what you said")
+    out = out.replace(/^\s*>+\s?.*$/gm, '');
     // asterisk action spans (single-line, non-greedy)
     out = out.replace(/\*{1,3}[^*\n]{0,500}?\*{1,3}/g, ' ');
     out = out.replace(/(?<![\w])_[^_\n]{0,200}?_(?![\w])/g, ' ');
@@ -431,6 +433,27 @@ export function sanitizeTextingOutput(text) {
         .join('\n\n');
     out = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     return out;
+}
+
+/**
+ * Detect echo: the "reply" repeats or quotes the user's own words back at
+ * them (verbatim containment or near-identity after normalization) — a
+ * common mid-size-model failure where it recites instead of answering.
+ * @param {string} text generated output
+ * @param {string[]} userTexts the user's messages (history + current)
+ */
+export function looksLikeEcho(text, userTexts) {
+    const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const n = norm(text);
+    if (n.length < 8) return false;
+    for (const ut of userTexts) {
+        const u = norm(ut);
+        if (u.length < 12) continue;
+        if (n === u) return true;
+        if (u.length >= 15 && n.includes(u)) return true;
+        if (n.length >= 15 && u.includes(n) && n.length / u.length > 0.8) return true;
+    }
+    return false;
 }
 
 /**

@@ -248,7 +248,7 @@ test('memory RAG: old texts get recalled into reply prompts', async () => {
     // reply generated; the last chat call should contain a system message with the old text
     assert.ok(h.chatCalls.length >= 1);
     const lastCall = h.chatCalls[h.chatCalls.length - 1];
-    const memMsg = lastCall.find((m) => m.role === 'system' && m.content.includes('from your own memory'));
+    const memMsg = lastCall.find((m) => m.role === 'system' && m.content.includes('your own memories'));
     assert.ok(memMsg, 'memory context block present in prompt');
     assert.ok(memMsg.content.includes('italy flights'));
     // and the recall was audited
@@ -387,6 +387,20 @@ test('bursts: {follow-up} marker produces multiple texts and chat messages', asy
     assert.deepEqual(h.delivered.map((d) => d.text.replace(/^You: /, '')), ['hey, guess what', 'i got the job!!']);
     // audit notes the burst
     assert.ok(h.store.readAudit('Bursty', 50).some((a) => a.kind === 'sent' && /2 texts/.test(a.text)));
+});
+
+test('echoed user words are rejected and retried, not delivered', async () => {
+    const card = characterCard('Echoe');
+    const replies = ['>hey did we ever finish the italy itinerary?', 'sounds amazing, booked for june!'];
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: replies });
+    await h.engine.onInbound({ character: 'Echoe', mes: 'hey did we ever finish the italy itinerary?', source: 'telegram' });
+
+    // the echo was retried away: only the real reply delivered
+    assert.equal(h.delivered.filter((d) => !d.text.startsWith('You:')).length, 1);
+    assert.ok(!h.delivered.some((d) => d.text.includes('italy itinerary')));
+    const state = stateOf(h.store, 'Echoe');
+    const msgs = h.chatStore.readMessages('Echoe', state.chatFile).filter((m) => !m.is_user);
+    assert.ok(!msgs.some((m) => m.mes.includes('italy itinerary')));
 });
 
 test('status() summarizes life state', async () => {
