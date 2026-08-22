@@ -48,6 +48,24 @@ export class ChatStore {
     }
 
     /**
+     * Move every chat file into chatDir/archive/ — preserved for reading but
+     * invisible to listChats (and SillyTavern), so the character genuinely
+     * starts a fresh conversation next time.
+     * @returns {number} files archived
+     */
+    archiveChats(character) {
+        const files = this.listChats(character);
+        if (!files.length) return 0;
+        const dir = this.chatDir(character);
+        const archiveDir = path.join(dir, 'archive');
+        fs.mkdirSync(archiveDir, { recursive: true });
+        for (const f of files) {
+            fs.renameSync(path.join(dir, f), path.join(archiveDir, f));
+        }
+        return files.length;
+    }
+
+    /**
      * Latest existing chat, or null.
      * @returns {string|null} file name
      */
@@ -62,7 +80,13 @@ export class ChatStore {
     createChat(character, greeting = null) {
         const dir = this.chatDir(character);
         fs.mkdirSync(dir, { recursive: true });
-        const file = this.chatFileName(character);
+        let file = this.chatFileName(character);
+        if (fs.existsSync(path.join(dir, file))) {
+            // same-second creation: uniquify so chats never overwrite each other
+            let n = 2;
+            while (fs.existsSync(path.join(dir, this.chatFileName(character) + ` (${n}).jsonl`))) n += 1;
+            file = this.chatFileName(character) + ` (${n}).jsonl`;
+        }
         const header = {
             chat_metadata: {},
             user_name: this.userName,

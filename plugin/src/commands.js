@@ -370,15 +370,15 @@ export function createCommandRegistry(ctx) {
             const name = binding.character;
             if ((args[0] ?? '').toLowerCase() !== 'confirm') {
                 return transport.send(chatId,
-                    `⚠️ This wipes ${name}'s relationship, journal, pending replies and entire memory index.\n`
-                    + 'Chats, Telegram binding and her card are kept; she restarts from the card defaults.\n\n'
+                    `⚠️ This wipes ${name}'s relationship, journal, pending replies and entire memory index, AND archives her chat history (moved to archive/, kept for reading but no longer influencing her).\n`
+                    + 'Telegram binding and her card are kept; she starts a truly fresh conversation with her greeting.\n\n'
                     + 'This cannot be undone. Type /new confirm to do it.');
             }
             try {
-                engine.purgeCharacter(name);
+                engine.purgeCharacter(name, { freshChat: true });
                 const entry = cards.find(name);
                 const seed = entry?.autolife?.relationship?.initial ?? 20;
-                await transport.send(chatId, `${name} has been reset — starting over from scratch (relationship ${seed}/100, empty memory, no journal). She is live.`);
+                await transport.send(chatId, `${name} has been fully reset — relationship ${seed}/100, empty memory, no journal, chat history archived. She is live with a fresh conversation.`);
             } catch (err) {
                 await transport.send(chatId, `Purge failed: ${err.message}`);
             }

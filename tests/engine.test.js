@@ -460,6 +460,35 @@ test('purge resets state to card seed and clears the memory index', async () => 
     assert.ok(h.store.readAudit('Purgy', 50).some((a) => a.kind === 'purged'));
 });
 
+test('full reset archives chats: post-purge prompts contain no old conversation', async () => {
+    const card = characterCard('Fresher');
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'totally, what time?' });
+    await h.engine.onInbound({ character: 'Fresher', mes: 'the codeword is pineapple', source: 'telegram' });
+    let st = h.store.loadState('Fresher', { initialRelationship: 20 });
+    const oldChat = st.chatFile;
+    assert.ok(oldChat);
+
+    await h.engine.purgeCharacter('Fresher', { freshChat: true });
+
+    // chat files archived out of sight
+    assert.equal(h.chatStore.listChats('Fresher').length, 0, 'no active chats remain');
+    const archivedDir = h.chatStore.chatDir('Fresher') + '/archive';
+    assert.ok(fs.existsSync(archivedDir) && fs.readdirSync(archivedDir).includes(oldChat), 'old chat preserved in archive/');
+
+    // next conversation is fresh: greeting only, no codeword anywhere in the prompt
+    h.engine.rng = makeRng([0.99, 0.0]); // quick reply on the fresh conversation
+    await h.engine.onInbound({ character: 'Fresher', mes: 'hi again', source: 'telegram' });
+    st = h.store.loadState('Fresher', { initialRelationship: 20 });
+    // NOTE: the fresh chat may reuse the same *name* (the original was moved to
+    // archive/); what matters is its CONTENT starts from the greeting.
+    const msgs = h.chatStore.readMessages('Fresher', st.chatFile);
+    assert.equal(msgs[0].is_user, false, 'fresh chat starts with greeting');
+    const sysMsg = h.chatCalls[h.chatCalls.length - 1].find((m) => m.role === 'system');
+    const lastCall = h.chatCalls[h.chatCalls.length - 1];
+    const anyCodeword = lastCall.some((m) => (m.content ?? '').includes('pineapple'));
+    assert.ok(!anyCodeword, 'old conversation absent from the new prompt');
+});
+
 test('audit granularity levels filter kinds', async () => {
     const { auditLevelAllows, auditGroup } = await import('../plugin/src/telegram.js');
     assert.equal(auditGroup('sent'), 'messages');

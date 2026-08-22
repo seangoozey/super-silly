@@ -888,14 +888,21 @@ export class Engine {
      * and the entire memory index. Chats, bindings and the CARD are kept;
      * state recreates from the card seed (enabled, seed relationship).
      */
-    purgeCharacter(character) {
+    purgeCharacter(character, { freshChat = false } = {}) {
         const entry = this.cards.find(character);
         if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        let archived = 0;
+        if (freshChat) {
+            archived = this.chatStore.archiveChats(entry.name);
+        }
         this.memory?.rebuild(entry.name);
         this.store.purgeState(entry.name);
-        this.#audit(entry.name, 'purged', 'runtime state purged — relationship, journal, pending replies and the memory index wiped (chats and card kept); state recreated from card defaults');
+        this.#audit(entry.name, 'purged',
+            freshChat
+                ? `full reset — relationship, journal, pending replies, memory index wiped; ${archived} chat file${archived === 1 ? '' : 's'} archived (preserved for reading, no longer in her context); fresh conversation starts with her greeting`
+                : 'runtime state purged — relationship, journal, pending replies and the memory index wiped (chats and card kept); state recreated from card defaults');
         this.emit('state_changed', { character: entry.name });
-        this.log(`purged runtime state for "${entry.name}"`);
+        this.log(`purged runtime state for "${entry.name}"${freshChat ? ` (fresh chat, ${archived} archived)` : ''}`);
     }
 
     // ------------------------------------------------------------ control surface (routes/commands)
