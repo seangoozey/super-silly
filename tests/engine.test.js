@@ -403,6 +403,38 @@ test('echoed user words are rejected and retried, not delivered', async () => {
     assert.ok(!msgs.some((m) => m.mes.includes('italy itinerary')));
 });
 
+test('evolve: reflection lands pending, approval injects into prompts', async () => {
+    const card = characterCard('Grower', { evolve: { enabled: true } });
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'I have gotten far more sarcastic with you.' });
+    await h.engine.reflectNow('Grower');
+
+    let notes = h.engine.evolveNotes('Grower');
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].status, 'pending', 'default requires approval');
+
+    // pending notes do NOT shape prompts
+    await h.engine.onInbound({ character: 'Grower', mes: 'hey', source: 'telegram' });
+    const sysMsg = h.chatCalls[h.chatCalls.length - 1].find((m) => m.role === 'system');
+    assert.ok(!sysMsg.content.includes('more sarcastic'), 'pending note not injected');
+
+    h.engine.decideNote('Grower', notes[0].ts, 'approve');
+    notes = h.engine.evolveNotes('Grower');
+    assert.equal(notes[0].status, 'approved');
+    assert.ok(h.store.readAudit('Grower', 50).some((a) => a.kind === 'evolve' && /approved/.test(a.text)));
+});
+
+test('evolve: auto_apply approves immediately and shapes the next prompt', async () => {
+    const card = characterCard('Auto', { evolve: { enabled: true, auto_apply: true } });
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'I trust you more than I used to.' });
+    await h.engine.reflectNow('Auto');
+    assert.equal(h.engine.evolveNotes('Auto')[0].status, 'approved');
+
+    await h.engine.onInbound({ character: 'Auto', mes: 'hello again', source: 'telegram' });
+    const sysMsg = h.chatCalls[h.chatCalls.length - 1].find((m) => m.role === 'system');
+    assert.ok(sysMsg.content.includes("How you've changed"), 'approved note injected');
+    assert.ok(sysMsg.content.includes('trust you more'));
+});
+
 test('status() summarizes life state', async () => {
     const card = characterCard('Sasha');
     const h = buildHarness({ card });

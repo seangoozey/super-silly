@@ -393,6 +393,38 @@ export function registerRoutes(router, deps) {
         res.json({ ok: true, chatFile: file });
     }));
 
+    // ---- evolve (self-reflection notes) ----
+    router.get('/evolve', wrap(async (req, res) => {
+        const name = String(req.query?.name ?? '');
+        const entry = cards.find(name);
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${name}".` });
+        res.json({
+            enabled: !!entry.autolife.evolve?.enabled,
+            autoApply: !!entry.autolife.evolve?.auto_apply,
+            notes: engine.evolveNotes(entry.name),
+        });
+    }));
+
+    router.post('/evolve/reflect', wrap(async (req, res) => {
+        const body = await readBody(req);
+        try {
+            const text = await engine.reflectNow(String(body.name ?? ''));
+            res.json({ ok: true, text });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
+        }
+    }));
+
+    router.post('/evolve/decide', wrap(async (req, res) => {
+        const body = await readBody(req);
+        try {
+            const note = engine.decideNote(String(body.name ?? ''), String(body.ts ?? ''), String(body.action ?? ''));
+            res.json({ ok: true, status: note.status });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
+        }
+    }));
+
     // ---- per-character panel: relationship + purge ----
     router.post('/relationship', wrap(async (req, res) => {
         const body = await readBody(req);

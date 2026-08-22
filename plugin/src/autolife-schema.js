@@ -1,7 +1,7 @@
 // Autolife card extension schema: defaults + validation.
 // Pure module, no dependencies. Shared by the server plugin and the card CLI.
 
-export const SPEC_VERSION = '1.3';
+export const SPEC_VERSION = '1.4';
 export const EXTENSION_KEY = 'autolife';
 
 export const DEFAULTS = Object.freeze({
@@ -46,6 +46,15 @@ export const DEFAULTS = Object.freeze({
     // context ("we met in 2023 at...", "you're a nurse, you hate your boss").
     // Injected as its own prompt section; {{about_user}} in templates.
     about_user: '',
+    evolve: {
+        // Self-reflection: the character occasionally writes short "how I've
+        // changed" notes. Notes live in engine state (never the card); approved
+        // notes are injected near personality. auto_apply skips approval.
+        enabled: false,
+        auto_apply: false,
+        interval_hours: 72,
+        max_notes: 10,
+    },
 });
 
 const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
@@ -208,6 +217,19 @@ export function validateAutolife(raw) {
         }
     }
 
+    if (raw.evolve !== undefined) {
+        if (!isPlainObject(raw.evolve)) {
+            errors.push('evolve must be an object.');
+        } else {
+            const ev = raw.evolve;
+            for (const k of ['enabled', 'auto_apply']) {
+                if (ev[k] !== undefined && typeof ev[k] !== 'boolean') errors.push(`evolve.${k} must be a boolean.`);
+            }
+            checkRange(ev, 'interval_hours', 1, 2160, errors, 'evolve');
+            checkRange(ev, 'max_notes', 1, 50, errors, 'evolve');
+        }
+    }
+
     if (raw.prompt !== undefined) {
         if (!isPlainObject(raw.prompt)) {
             errors.push('prompt must be an object.');
@@ -290,6 +312,7 @@ export function normalizeAutolife(raw) {
     out.memory = { ...d.memory, ...(raw?.memory ?? {}) };
     out.prompt = { ...d.prompt, ...(raw?.prompt ?? {}) };
     out.about_user = typeof raw?.about_user === 'string' ? raw.about_user.slice(0, 2000) : (d.about_user ?? '');
+    out.evolve = { ...d.evolve, ...(raw?.evolve ?? {}) };
     out.schedule = (Array.isArray(out.schedule) ? out.schedule : []).map((b) => ({
         days: b.days ?? [0, 1, 2, 3, 4, 5, 6],
         availability: b.availability ?? 0.5,

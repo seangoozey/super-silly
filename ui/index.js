@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.1';
+const EXT_VERSION = '0.6.2';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -376,6 +376,25 @@ function panelModalHtml() {
                         <button type="button" class="menu_button autolife-btn" id="autolife_about_user_save">Save with card</button>
                     </div>
                 </div>
+
+                <div class="autolife-section">
+                    <h4>How I've changed <span class="autolife-muted">(self-reflections)</span></h4>
+                    <div class="autolife-form-grid">
+                        <label>Enable evolve reflections</label>
+                        <input type="checkbox" id="autolife_evolve_on">
+                        <label>Auto-apply (skip approval)</label>
+                        <input type="checkbox" id="autolife_evolve_auto">
+                        <label>Reflection interval (hours)</label>
+                        <input type="number" id="autolife_evolve_interval" min="1" max="2160" value="72">
+                    </div>
+                    <div style="margin-top:4px;">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_evolve_save">Save evolve settings</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_evolve_now"><i class="fa-solid fa-seedling"></i> Reflect now</button>
+                        <span id="autolife_evolve_msg" class="autolife-muted"></span>
+                    </div>
+                    <div class="autolife-muted">Every few days the character reflects on how she's durably changed; reflections are suggestions you approve here or via /evolve in Telegram. Approved notes shape her prompts — the card itself never changes (purge resets her to the seed).</div>
+                    <div id="autolife_evolve_list" class="autolife-audit-feed"></div>
+                </div>
             </div>
         </div>
     </div>`;
@@ -462,8 +481,12 @@ async function refreshPanel() {
             $('#autolife_mem_max').val(a.memory?.max_entries ?? 4000);
             $('#autolife_prompt_card').val(a.prompt?.template ?? '');
             $('#autolife_about_user').val(a.about_user ?? '');
+            $('#autolife_evolve_on').prop('checked', !!a.evolve?.enabled);
+            $('#autolife_evolve_auto').prop('checked', !!a.evolve?.auto_apply);
+            $('#autolife_evolve_interval').val(a.evolve?.interval_hours ?? 72);
             $('#autolife_sched_rows').html((a.schedule.length ? a.schedule : []).map(schedRowHtml).join(''));
         }
+        loadEvolveSection();
     } catch (err) {
         $('#autolife_panel_statusline').text(`error: ${err.message}`);
     }
@@ -695,6 +718,12 @@ function buildAutolifeFromForm() {
         },
         prompt: { template: $('#autolife_prompt_card').val() },
         about_user: $('#autolife_about_user').val().slice(0, 2000),
+        evolve: {
+            enabled: $('#autolife_evolve_on').prop('checked'),
+            auto_apply: $('#autolife_evolve_auto').prop('checked'),
+            interval_hours: Number($('#autolife_evolve_interval').val()) || 72,
+            max_notes: 10,
+        },
     };
 }
 
@@ -1261,6 +1290,29 @@ function wireEvents() {
 
     $(document).on('click', '#autolife_prompt_card_save', () => saveCard());
     $(document).on('click', '#autolife_about_user_save', () => saveCard());
+
+    $(document).on('click', '#autolife_evolve_save', () => saveCard());
+
+    $(document).on('click', '#autolife_evolve_now', async () => {
+        if (!panelChar) return;
+        $('#autolife_evolve_msg').text('reflecting…');
+        try {
+            const r = await api('/evolve/reflect', 'POST', { name: panelChar });
+            $('#autolife_evolve_msg').text(r.text ? 'reflected ✓' : 'nothing came of it');
+            loadEvolveSection();
+        } catch (e) { $('#autolife_evolve_msg').text(e.message); }
+        setTimeout(() => $('#autolife_evolve_msg').text(''), 4000);
+    });
+
+    $(document).on('click', '[data-evolve-ok]', (ev) => {
+        api('/evolve/decide', 'POST', { name: panelChar, ts: String($(ev.currentTarget).data('evolve-ok')), action: 'approve' })
+            .then(loadEvolveSection).catch((e) => toast(e.message));
+    });
+
+    $(document).on('click', '[data-evolve-no]', (ev) => {
+        api('/evolve/decide', 'POST', { name: panelChar, ts: String($(ev.currentTarget).data('evolve-no')), action: 'discard' })
+            .then(loadEvolveSection).catch((e) => toast(e.message));
+    });
 
     $(document).on('click', '#autolife_prompt_preview_btn', async () => {
         if (!panelChar) return;

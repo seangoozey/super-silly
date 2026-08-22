@@ -1,6 +1,6 @@
-# Autolife — Autonomous Character Card Extension, Version 1.3
+# Autolife — Autonomous Character Card Extension, Version 1.4
 
-Status: **v1.3** (1.0/1.1 cards remain fully valid)
+Status: **v1.4** (1.0/1.1 cards remain fully valid)
 Base: [Character Card Spec V3](https://github.com/kwaroran/character-card-spec-v3) (`spec: "chara_card_v3"`, `spec_version: "3.0"`)
 
 ## 1. Overview
@@ -311,6 +311,32 @@ same framing as the journal — private memory to weave in, never to recite or
 mention. Retrieval runs for reply-like generations (reply, catch-up,
 follow-up) but not initiative, which stays anchored to the present.
 
+## 8d. `evolve` — self-reflection ("how I've changed")
+
+```jsonc
+{
+    // Opt-in per card. When true, every few days (interval_hours, default 72)
+    // the engine asks the character — cool generation, grounded in her journal
+    // and actual recent messages — to write 1-2 first-person sentences on how
+    // she has DURABLY changed since the card was written.
+    "enabled": false,
+
+    // Skip approval: reflections apply immediately. Default false — notes land
+    // as suggestions for the user to approve (panel or /evolve in Telegram).
+    "auto_apply": false,
+
+    "interval_hours": 72,  // 1-2160
+    "max_notes": 10        // 1-50
+}
+```
+
+Approved notes are injected near the personality section ("How you've changed
+since the above was written…", last 6) and available as `{{evolve}}` in
+templates. **Notes live in engine state, never in the card** — the card is the
+authored seed, sharing stays clean, and purge resets the character to it.
+Reflections are clamped: ≤2 sentences, ≤400 chars, temperature 0.6, and the
+directive forbids contradicting core personality.
+
 ## 9. Validation rules (summary)
 
 A `autolife` object is valid when:
@@ -348,6 +374,7 @@ list; the plugin uses the same module.
 
 ## 11. Changelog
 
+- **1.4** — `evolve`: opt-in self-reflection notes (approved-only prompt injection, card never modified).
 - **1.3** — `about_user`: per-card knowledge of {{user}}.
 - **1.2** — `prompt` section: per-card system-prompt template with named placeholders.
 - **1.1** — `memory` section: engine-side RAG over chat history (`enabled`, `retrieve_count`, `max_entries`).

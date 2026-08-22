@@ -260,7 +260,7 @@ export function buildSystemPrompt(ctx) {
     const s = promptSections(ctx);
     const template = (typeof ctx.template === 'string' && ctx.template.trim()) ? ctx.template : null;
     if (!template) {
-        return [s.cardSystem, s.identity, s.description, s.personality, s.scenario, s.aboutUser, s.life, s.relationship, s.journal, s.style, s.postHistory]
+        return [s.cardSystem, s.identity, s.description, s.personality, s.scenario, s.aboutUser, s.evolve, s.life, s.relationship, s.journal, s.style, s.postHistory]
             .filter(Boolean).join('\n\n');
     }
     const sub = (name) => s[name] ?? '';
@@ -271,6 +271,7 @@ export function buildSystemPrompt(ctx) {
         .replace(/\{\{personality\}\}/gi, () => sub('personality'))
         .replace(/\{\{scenario\}\}/gi, () => sub('scenario'))
         .replace(/\{\{about_user\}\}/gi, () => sub('aboutUser'))
+        .replace(/\{\{evolve\}\}/gi, () => sub('evolve'))
         .replace(/\{\{life\}\}/gi, () => sub('life'))
         .replace(/\{\{relationship\}\}/gi, () => sub('relationship'))
         .replace(/\{\{journal\}\}/gi, () => sub('journal'))
@@ -301,6 +302,12 @@ export function promptSections(ctx) {
     sections.personality = data.personality?.trim() ? `Personality: ${sub(data.personality)}` : null;
     sections.scenario = data.scenario?.trim() ? `Situation between you two: ${sub(data.scenario)}` : null;
     sections.aboutUser = a.about_user?.trim() ? `What you know about ${ctx.userName}: ${sub(a.about_user)}` : null;
+    if (a.evolve?.enabled && ctx.evolveNotes?.length) {
+        const recent = ctx.evolveNotes.slice(-6).map((n) => `- ${n.text}`).join('\n');
+        sections.evolve = `How you've changed since the above was written (your own later reflections — live them, don't recite them):\n${recent}`;
+    } else {
+        sections.evolve = null;
+    }
 
     const local = ctx.life.local;
     sections.life = `Your life right now: it is ${local.weekdayName ?? ''} ${local.hhmm} (${a.timezone}). You are currently ${ctx.life.activity}.`
@@ -341,6 +348,27 @@ const DIRECTIVES = {
         `(Private direction, invisible to ${userName}: ${userName} sent you a message earlier that you never answered because you were busy or missed it. Now text them ONE message that acknowledges it — apologize or not, however you'd really do it. Do not reference these directions.)`,
 };
 
+/**
+ * Directive for a self-reflection ("how I've changed") note. Cool generation,
+ * grounded in journal + actual messages, hard-clamped against redefining core
+ * personality.
+ */
+export function buildEvolvePrompt(ctx) {
+    const data = ctx.card.data ?? ctx.card;
+    return [
+        `You are ${data.name}. Your personality as originally written: ${data.personality?.trim() || '(none)'}.`,
+        `Your situation as originally written: ${data.scenario?.trim() || '(none)'}.`,
+        `Based on your recent journal notes and your ACTUAL messages with ${ctx.userName} shown in this conversation, reflect on how you have DURABLY changed since that was written — not a passing mood.`,
+        `Write 1-2 short first-person sentences describing the change (e.g. "I have gotten much more sarcastic with them than I used to be.").`,
+        'Rules: never contradict your core personality; describe change relative to the original writing; plain text only; no lists.',
+    ].join(' ');
+}
+
+/**
+ * Directive for a self-reflection ("how I've changed") note. Cool generation,
+ * grounded in journal + actual messages, clamped against redefining core
+ * personality.
+ */
 /**
  * Format retrieved memory hits as a compact system block for the prompt.
  * @param {Array<{ts: string, role: string, text: string, score: number}>} hits

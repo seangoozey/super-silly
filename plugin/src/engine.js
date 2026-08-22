@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, looksLikeEcho, splitIntoTexts, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, looksLikeEcho, splitIntoTexts, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -539,6 +539,15 @@ export class Engine {
             await this.#generate(entry, state, 'followup', now);
         }
 
+        // 5. evolve reflection ("how I've changed") — opt-in per card
+        if (entry.autolife.evolve?.enabled && !life.isAsleep
+            && !(state.evolve?.notes ?? []).some((n) => n.status === 'pending')
+            && (!state.evolve?.lastReflectAt
+                || now.getTime() - new Date(state.evolve.lastReflectAt).getTime() > (entry.autolife.evolve.interval_hours ?? 72) * HOUR)
+            && this.rng.float() < 0.06) {
+            await this.#reflect(entry, state, now);
+        }
+
         // 5. journal upkeep
         if (entry.autolife.journal?.enabled && !life.isAsleep
             && (!state.lastJournalAt || now.getTime() - new Date(state.lastJournalAt).getTime() > 3 * HOUR)
@@ -589,6 +598,7 @@ export class Engine {
             journal: state.journal,
             userName: this.chatStore.userName,
             template: ctxTemplate,
+            evolveNotes: (state.evolve?.notes ?? []).filter((n) => n.status === 'approved'),
         });
 
         const numPredict = NUM_PREDICT[entry.autolife.behavior?.avg_message_length ?? 'short'] ?? 160;
@@ -792,6 +802,84 @@ export class Engine {
         } catch (err) {
             this.log(`journal for "${entry.name}" failed: ${err.message}`);
         }
+    }
+
+    /**
+     * Generate one self-reflection note. Cool temperature, grounded in journal
+     * + recent messages. status: 'approved' when the card sets auto_apply,
+     * else 'pending' for panel/Telegram review. Never touches the card.
+     */
+    async #reflect(entry, state, now) {
+        try {
+            const model = this.effectiveModel();
+            if (!(await this.ollama.hasModel(model))) return null;
+            const directive = buildEvolvePrompt({ card: entry.card, userName: this.chatStore.userName });
+            const journal = (state.journal ?? []).slice(-5).map((j) => `- ${j.text}`).join('\n');
+            const system = journal ? `${directive}\n\nYour recent journal:\n${journal}` : directive;
+            const history = historyToOllama(
+                this.chatStore.readMessages(entry.name, state.chatFile, 10),
+                entry.name,
+                this.chatStore.userName,
+            );
+            const raw = await this.ollama.chat({
+                model,
+                messages: [{ role: 'system', content: system }, ...history, { role: 'user', content: '(write your reflection now)' }],
+                temperature: 0.6,
+                numPredict: 120,
+            });
+            const text = sanitizeTextingOutput(cleanModelOutput(raw)).slice(0, 400);
+            if (!text) return null;
+            state.evolve = state.evolve ?? { lastReflectAt: null, notes: [] };
+            const auto = !!entry.autolife.evolve?.auto_apply;
+            state.evolve.notes.push({ ts: now.toISOString(), text, status: auto ? 'approved' : 'pending' });
+            const cap = (entry.autolife.evolve?.max_notes ?? 10) * 2;
+            if (state.evolve.notes.length > cap) state.evolve.notes = state.evolve.notes.slice(-cap);
+            state.evolve.lastReflectAt = now.toISOString();
+            this.store.saveState(state);
+            this.#audit(entry.name, 'evolve', `reflected: "${text}"${auto ? ' (auto-applied)' : ' — pending approval (/evolve or the panel)'}`);
+            this.emit('evolve', { character: entry.name, text, status: auto ? 'approved' : 'pending' });
+            return text;
+        } catch (err) {
+            this.log(`evolve reflection for "${entry.name}" failed: ${err.message}`);
+            return null;
+        }
+    }
+
+    /** Force a reflection now (panel button / command). */
+    async reflectNow(character) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife?.evolve?.enabled) throw new Error(`Evolve is not enabled for "${character}". Enable it in their Autolife panel.`);
+        const state = this.#state(entry);
+        this.#ensureChat(entry, state);
+        return this.#reflect(entry, state, this.nowFn());
+    }
+
+    /** All evolve notes (newest last) for surfaces. */
+    evolveNotes(character) {
+        const entry = this.cards.find(character);
+        if (!entry) return [];
+        const state = this.#state(entry);
+        return state.evolve?.notes ?? [];
+    }
+
+    /** Approve or discard a note by timestamp. */
+    decideNote(character, ts, action) {
+        const entry = this.cards.find(character);
+        if (!entry) throw new Error(`No character "${character}".`);
+        const state = this.#state(entry);
+        const notes = state.evolve?.notes ?? [];
+        const note = notes.find((n) => n.ts === ts);
+        if (!note) throw new Error('Note not found.');
+        if (action === 'approve') {
+            note.status = 'approved';
+            this.#audit(character, 'evolve', `reflection approved: "${note.text}"`);
+        } else if (action === 'discard') {
+            note.status = 'discarded';
+            this.#audit(character, 'evolve', `reflection discarded: "${note.text}"`);
+        } else throw new Error('action must be approve or discard');
+        this.store.saveState(state);
+        this.emit('evolve', { character, status: note.status });
+        return note;
     }
 
     // ------------------------------------------------------------ control surface (routes/commands)

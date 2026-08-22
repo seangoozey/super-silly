@@ -78,9 +78,10 @@ export function createCommandRegistry(ctx) {
                 '/status — what your character is up to\n' +
                 '/start, /stop — full stop/start (they begin stopped after server restarts)\n' +
                 '/pause, /resume — soft pause of the character\'s life\n' +
+                '/evolve — review how they\'ve changed (ok/no <n>, now)\n' +
                 '/audit [on|off] — see every engine decision as it happens\n' +
                 '/memory — long-term memory status\n' +
-                '/model — model control (list/use/pull)\n' +
+                '/model — model control (list/use/pull/think)\n' +
                 '/upload — attach a character card (.png/.json) to import it\n\n' +
                 'Then just text them like a real person. They might reply instantly… or a while later. Or be asleep.');
         },
@@ -344,6 +345,46 @@ export function createCommandRegistry(ctx) {
                 `- ${status?.memoryEntries ?? 0} texts indexed${status?.memoryEntries ? ' (older conversations are searchable)' : ''}\n` +
                 `- Embedding model: ${settings.memory?.embed_model ?? 'nomic-embed-text'}\n` +
                 '- Recalled automatically when your message relates to older chats — watch for 🔎 "recalled N older texts" audit lines.');
+        },
+    });
+
+    register({
+        name: 'evolve',
+        help: 'review how the character has changed (self-reflections)',
+        run: async (chatId, args) => {
+            const binding = bindingFor(chatId);
+            if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
+            const name = binding.character;
+            const sub = (args[0] ?? '').toLowerCase();
+            const notes = engine.evolveNotes(name);
+            const pending = notes.filter((n) => n.status === 'pending');
+
+            if (sub === 'ok' || sub === 'yes' || sub === 'no' || sub === 'discard') {
+                const idx = Number(args[1]) - 1;
+                const note = pending[idx];
+                if (!note) return transport.send(chatId, 'No pending suggestion with that number. /evolve to list.');
+                const action = (sub === 'ok' || sub === 'yes') ? 'approve' : 'discard';
+                engine.decideNote(name, note.ts, action);
+                return transport.send(chatId, action === 'approve'
+                    ? `Approved: "${note.text}"\nIt shapes her from the next message on. (Card unchanged — purge resets.)`
+                    : `Discarded: "${note.text}"`);
+            }
+
+            if (sub === 'now') {
+                const text = await engine.reflectNow(name).catch((e) => null);
+                return transport.send(chatId, text
+                    ? `New reflection: "${text}"\n/evolve ok 1 to approve.`
+                    : 'Reflection failed or evolve is disabled for this character.');
+            }
+
+            if (!notes.length) {
+                return transport.send(chatId, `${name} hasn't reflected yet. Reflections arrive every few days when evolve is enabled in her Autolife panel (/evolve now to force one).`);
+            }
+            const list = pending.map((n, i) => `${i + 1}. ${n.text}`).join('\n');
+            const approved = notes.filter((n) => n.status === 'approved');
+            return transport.send(chatId,
+                (pending.length ? `Pending reflections:\n${list}\n\n/evolve ok <n> to apply · /evolve no <n> to discard\n\n` : 'No pending reflections.\n\n')
+                + `${approved.length} applied reflection${approved.length === 1 ? '' : 's'} shaping her now.`);
         },
     });
 
