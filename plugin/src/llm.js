@@ -198,6 +198,7 @@ export class OllamaClient {
             options: {
                 temperature: req.temperature ?? 0.9,
                 num_predict: req.numPredict ?? 160,
+                ...(req.numCtx && req.numCtx > 0 ? { num_ctx: req.numCtx } : {}),
             },
         };
         if (req.think === 'on') body.think = true;
@@ -259,7 +260,7 @@ export function buildSystemPrompt(ctx) {
     const s = promptSections(ctx);
     const template = (typeof ctx.template === 'string' && ctx.template.trim()) ? ctx.template : null;
     if (!template) {
-        return [s.cardSystem, s.identity, s.description, s.personality, s.scenario, s.life, s.relationship, s.journal, s.style, s.postHistory]
+        return [s.cardSystem, s.identity, s.description, s.personality, s.scenario, s.aboutUser, s.life, s.relationship, s.journal, s.style, s.postHistory]
             .filter(Boolean).join('\n\n');
     }
     const sub = (name) => s[name] ?? '';
@@ -269,6 +270,7 @@ export function buildSystemPrompt(ctx) {
         .replace(/\{\{description\}\}/gi, () => sub('description'))
         .replace(/\{\{personality\}\}/gi, () => sub('personality'))
         .replace(/\{\{scenario\}\}/gi, () => sub('scenario'))
+        .replace(/\{\{about_user\}\}/gi, () => sub('aboutUser'))
         .replace(/\{\{life\}\}/gi, () => sub('life'))
         .replace(/\{\{relationship\}\}/gi, () => sub('relationship'))
         .replace(/\{\{journal\}\}/gi, () => sub('journal'))
@@ -298,6 +300,7 @@ export function promptSections(ctx) {
     sections.description = data.description?.trim() ? `Who you are: ${sub(data.description)}` : null;
     sections.personality = data.personality?.trim() ? `Personality: ${sub(data.personality)}` : null;
     sections.scenario = data.scenario?.trim() ? `Situation between you two: ${sub(data.scenario)}` : null;
+    sections.aboutUser = a.about_user?.trim() ? `What you know about ${ctx.userName}: ${sub(a.about_user)}` : null;
 
     const local = ctx.life.local;
     sections.life = `Your life right now: it is ${local.weekdayName ?? ''} ${local.hhmm} (${a.timezone}). You are currently ${ctx.life.activity}.`

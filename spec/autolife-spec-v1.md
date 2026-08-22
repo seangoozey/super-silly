@@ -1,6 +1,6 @@
-# Autolife — Autonomous Character Card Extension, Version 1.2
+# Autolife — Autonomous Character Card Extension, Version 1.3
 
-Status: **v1.2** (1.0/1.1 cards remain fully valid)
+Status: **v1.3** (1.0/1.1 cards remain fully valid)
 Base: [Character Card Spec V3](https://github.com/kwaroran/character-card-spec-v3) (`spec: "chara_card_v3"`, `spec_version: "3.0"`)
 
 ## 1. Overview
@@ -348,6 +348,7 @@ list; the plugin uses the same module.
 
 ## 11. Changelog
 
+- **1.3** — `about_user`: per-card knowledge of {{user}}.
 - **1.2** — `prompt` section: per-card system-prompt template with named placeholders.
 - **1.1** — `memory` section: engine-side RAG over chat history (`enabled`, `retrieve_count`, `max_entries`).
 - **1.0** — initial spec: schedule, behavior, initiative, relationship.initial,

@@ -1,7 +1,7 @@
 // Autolife card extension schema: defaults + validation.
 // Pure module, no dependencies. Shared by the server plugin and the card CLI.
 
-export const SPEC_VERSION = '1.2';
+export const SPEC_VERSION = '1.3';
 export const EXTENSION_KEY = 'autolife';
 
 export const DEFAULTS = Object.freeze({
@@ -37,11 +37,15 @@ export const DEFAULTS = Object.freeze({
     prompt: {
         // Optional template for the engine's system prompt. Empty = built-in
         // assembly. Placeholders: {{card_system}} {{identity}} {{description}}
-        // {{personality}} {{scenario}} {{life}} {{relationship}} {{journal}}
-        // {{style}} {{post_history}} {{time}} {{weekday}} {{activity}}
+        // {{personality}} {{scenario}} {{about_user}} {{life}} {{relationship}}
+        // {{journal}} {{style}} {{post_history}} {{time}} {{weekday}} {{activity}}
         // {{char}} {{user}}. Omitted placeholders drop their sections.
         template: '',
     },
+    // What this character knows about {{user}} — per-card persona/relationship
+    // context ("we met in 2023 at...", "you're a nurse, you hate your boss").
+    // Injected as its own prompt section; {{about_user}} in templates.
+    about_user: '',
 });
 
 const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
@@ -285,6 +289,7 @@ export function normalizeAutolife(raw) {
     out.journal = { ...d.journal, ...(raw?.journal ?? {}) };
     out.memory = { ...d.memory, ...(raw?.memory ?? {}) };
     out.prompt = { ...d.prompt, ...(raw?.prompt ?? {}) };
+    out.about_user = typeof raw?.about_user === 'string' ? raw.about_user.slice(0, 2000) : (d.about_user ?? '');
     out.schedule = (Array.isArray(out.schedule) ? out.schedule : []).map((b) => ({
         days: b.days ?? [0, 1, 2, 3, 4, 5, 6],
         availability: b.availability ?? 0.5,

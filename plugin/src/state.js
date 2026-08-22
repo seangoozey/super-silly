@@ -15,6 +15,10 @@ export function defaultSettings() {
             fallback: DEFAULT_FALLBACK,
             current: DEFAULT_PRIMARY,
             temperature: 0.9,
+            // Ollama context window (num_ctx). 0 = Ollama default (4096).
+            // Raise to 8192 for long histories — needs VRAM headroom; with an
+            // ~18GB Q6_K model on a 24GB card, drop to Q5 first.
+            num_ctx: 0,
             // 'off' (default: fast short texts, thinking suppressed — recommended
             // for the texting sim), 'on' (model reasons first; needs a thinking-
             // capable model like Dark-Scarlett and gets extra token headroom),
@@ -27,6 +31,20 @@ export function defaultSettings() {
             // the Autolife panel or /start. Set false to keep them running
             // across restarts.
             start_stopped: true,
+            // Busy characters text short and distracted; free evening characters
+            // may ramble a little.
+            availability_tone: true,
+            // Close relationships reply faster (delay scaled 0.5x at rel 100,
+            // 1.5x at rel 0).
+            relationship_speed: true,
+        },
+        // Your sleep, not theirs: no engine-initiated texts inside this window,
+        // due replies hold until it ends. Times in the given IANA timezone.
+        quiet_hours: {
+            enabled: false,
+            start: '23:00',
+            end: '07:00',
+            timezone: 'UTC',
         },
         memory: {
             embed_model: process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text',
@@ -94,6 +112,8 @@ export class StateStore {
             engine: { ...base.engine, ...(saved.engine ?? {}) },
             memory: { ...base.memory, ...(saved.memory ?? {}) },
             persona: { ...base.persona, ...(saved.persona ?? {}) },
+            prompt: { ...base.prompt, ...(saved.prompt ?? {}) },
+            quiet_hours: { ...base.quiet_hours, ...(saved.quiet_hours ?? {}) },
             telegram: { ...base.telegram, ...(saved.telegram ?? {}) },
         };
         if (!merged.telegram.token && process.env.TELEGRAM_BOT_TOKEN) merged.telegram.token = process.env.TELEGRAM_BOT_TOKEN;

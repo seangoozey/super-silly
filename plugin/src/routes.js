@@ -200,7 +200,18 @@ export function registerRoutes(router, deps) {
         const body = await readBody(req);
         const settings = store.loadSettings();
         if (body.model) settings.model = { ...settings.model, ...body.model };
-        if (body.engine) settings.engine = { ...settings.engine, ...body.engine };
+        if (body.engine) {
+            settings.engine = { ...settings.engine, ...body.engine };
+            ['availability_tone', 'relationship_speed', 'start_stopped'].forEach((k) => {
+                if (typeof body.engine[k] === 'boolean') {
+                    audit(null, 'engine', `${k} set to ${body.engine[k]}`);
+                }
+            });
+        }
+        if (body.quiet_hours) {
+            settings.quiet_hours = { ...settings.quiet_hours, ...body.quiet_hours };
+            audit(null, 'engine', `quiet hours ${settings.quiet_hours.enabled ? `enabled (${settings.quiet_hours.start}–${settings.quiet_hours.end} ${settings.quiet_hours.timezone})` : 'disabled'}`);
+        }
         if (body.memory) {
             const before = settings.memory?.embed_model;
             settings.memory = { ...settings.memory, ...body.memory };

@@ -3,7 +3,7 @@
 // their messages through Ollama, writing them into the SillyTavern chat and
 // pushing them to bound transports (Telegram).
 
-import { evaluate, sampleDelayMinutes, clamp01 } from './schedule.js';
+import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
 import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, looksLikeEcho, splitIntoTexts, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
@@ -336,12 +336,67 @@ export class Engine {
             return;
         }
 
-        const delayMinutes = sampleDelayMinutes(entry.autolife, life, this.rng);
+        let delayMinutes = sampleDelayMinutes(entry.autolife, life, this.rng);
+        // people who are into you reply faster: close = 0.5x, distant = 1.5x
+        if (this.settings.engine?.relationship_speed !== false) {
+            delayMinutes *= Math.min(1.6, Math.max(0.4, 1.5 - state.relationship / 100));
+        }
+        // quiet hours: your sleep, not theirs — replies hold until the window ends
+        const quietHold = this.quietHold(state, now);
+        if (quietHold) {
+            const dueAt = new Date(Math.max(quietHold.getTime(), now.getTime() + delayMinutes * MINUTE));
+            state.pendingReply = { dueAt: dueAt.toISOString(), attempts: 0, sinceAt: now.toISOString() };
+            this.store.saveState(state);
+            this.#audit(entry.name, 'deferred', `will reply after quiet hours (${this.#quietLabel()})`);
+            this.emit('deferred', { character: entry.name, dueAt: state.pendingReply.dueAt });
+            return;
+        }
         state.pendingReply = { dueAt: new Date(now.getTime() + delayMinutes * MINUTE).toISOString(), attempts: 0, sinceAt: now.toISOString() };
         this.store.saveState(state);
         this.log(`"${entry.name}" will reply in ~${delayMinutes.toFixed(0)} min (${life.activity})`);
         this.emit('deferred', { character: entry.name, dueAt: state.pendingReply.dueAt });
         this.#audit(entry.name, 'deferred', `will reply in ~${delayMinutes.toFixed(0)} min — ${life.activity} (${Math.round(life.availability * 100)}% available)`);
+    }
+
+    // ------------------------------------------------------------ quiet hours
+
+    /**
+     * If quiet hours are enabled and `now` falls inside the window, return the
+     * Date the window ends (replies hold until then). Null otherwise.
+     */
+    quietHold(_state, now) {
+        const q = this.settings.quiet_hours;
+        if (!q?.enabled) return null;
+        const tz = q.timezone || 'UTC';
+        let local;
+        try {
+            local = localParts(now, tz);
+        } catch {
+            local = localParts(now, 'UTC');
+        }
+        const nowMin = local.minutes;
+        const [sh, sm] = String(q.start ?? '23:00').split(':').map(Number);
+        const [eh, em] = String(q.end ?? '07:00').split(':').map(Number);
+        const start = sh * 60 + (sm || 0);
+        const end = eh * 60 + (em || 0);
+        const inside = start <= end
+            ? (nowMin >= start && nowMin < end)
+            : (nowMin >= start || nowMin < end); // wraps midnight
+        if (!inside) return null;
+        // compute the end time as a real Date in the server's clock
+        const wakeLocal = new Date(now.getTime());
+        const offset = local.minutes - new Date(wakeLocal.getTime() - wakeLocal.getTimezoneOffset() * 60000).getUTCHours() * 60 - 0; // not reliable; use diff
+        // simpler: compute minutes until window end in local terms
+        const minsUntilEnd = start <= end
+            ? (end - nowMin + 1440) % 1440 || 1440
+            : ((end - nowMin) + 1440) % 1440 || 1440;
+        void offset;
+        return new Date(now.getTime() + minsUntilEnd * MINUTE);
+    }
+
+    #quietLabel() {
+        const q = this.settings.quiet_hours;
+        return `${q?.start ?? '23:00'}–${q?.end ?? '07:00'} ${q?.timezone || 'UTC'}`;
     }
 
     // ------------------------------------------------------------ tick
@@ -394,10 +449,16 @@ export class Engine {
         const life = evaluate(entry.autolife, now);
         const init = entry.autolife.initiative;
         const b = entry.autolife.behavior;
+        const quietHold = this.quietHold(state, now);
 
         // 1. fire due delayed replies
         if (state.pendingReply) {
             if (new Date(state.pendingReply.dueAt).getTime() <= now.getTime()) {
+                if (quietHold) {
+                    // quiet hours: hold the due reply until the window ends
+                    state.pendingReply.dueAt = quietHold.toISOString();
+                    this.store.saveState(state);
+                } else {
                 const sinceAt = state.pendingReply.sinceAt ?? null;
                 const lagMin = sinceAt ? Math.round((now.getTime() - new Date(sinceAt).getTime()) / MINUTE) : 0;
                 state.pendingReply = null;
@@ -419,11 +480,12 @@ export class Engine {
                     const ok = await this.#generate(entry, state, 'reply', now, extra);
                     if (!ok) this.#repent(entry, state, now, 'reply', 'generation failed');
                 }
+                }
             }
         }
 
         // 2. catch-up after an ignored message
-        if (b.catch_up && state.ignoredAt
+        if (!quietHold && b.catch_up && state.ignoredAt
             && now.getTime() - new Date(state.ignoredAt).getTime() > 45 * MINUTE
             && life.availability > 0.4 && !state.pendingReply && !this.inFlight.has(entry.name)) {
             state.ignoredAt = null;
@@ -433,8 +495,8 @@ export class Engine {
             await this.#generate(entry, state, 'catchup', now);
         }
 
-        // 3. proactive initiative
-        if (init.enabled && !life.isAsleep && !state.pendingReply && !this.inFlight.has(entry.name)) {
+        // 3. proactive initiative (never during your quiet hours)
+        if (!quietHold && init.enabled && !life.isAsleep && !state.pendingReply && !this.inFlight.has(entry.name)) {
             const day = life.local.dateKey;
             if (state.initiativeDay?.date !== day) state.initiativeDay = { date: day, count: 0 };
             const gapOk = !state.lastInitiativeAt || now.getTime() - new Date(state.lastInitiativeAt).getTime() >= init.min_gap_minutes * MINUTE;
@@ -532,9 +594,19 @@ export class Engine {
         const numPredict = NUM_PREDICT[entry.autolife.behavior?.avg_message_length ?? 'short'] ?? 160;
         const think = this.settings.model?.think ?? 'off';
         const genNumPredict = think === 'on' ? numPredict + 600 : numPredict; // thinking needs room beyond the message
+        const numCtx = Number(this.settings.model?.num_ctx) > 0 ? Number(this.settings.model.num_ctx) : undefined;
         const memoryBlock = ['reply', 'catchup', 'followup'].includes(kind)
             ? await this.#recallFor(entry, history)
             : null;
+        // availability shapes tone: busy people text short and distracted
+        let toneNote = null;
+        if (this.settings.engine?.availability_tone !== false) {
+            if (life.availability < 0.35) {
+                toneNote = `(Private: you are busy and distracted right now — keep this text VERY short, lower energy, slightly rushed; maybe hint you're in the middle of something.)`;
+            } else if (life.availability > 0.75 && life.local.minutes > 19 * 60) {
+                toneNote = `(Private: you're relaxed with time to spare tonight — you can ramble a little if it fits.)`;
+            }
+        }
         const candidates = [...new Set([this.settings.model?.current, this.settings.model?.fallback].filter(Boolean))];
         const messages = buildChatMessages({
             system,
@@ -543,7 +615,7 @@ export class Engine {
             userName: this.chatStore.userName,
             kind,
             memory: memoryBlock,
-            extra: extra?.system,
+            extra: [extra?.system, toneNote].filter(Boolean).join('\n') || undefined,
         });
 
         const userTexts = history.filter((m) => m.is_user).map((m) => String(m.mes ?? ''));
@@ -567,6 +639,7 @@ export class Engine {
                     messages,
                     temperature: this.settings.model?.temperature ?? 0.9,
                     numPredict: genNumPredict,
+                    numCtx,
                     think,
                 });
                 const parsed = extractFollowUpMarker(cleanModelOutput(raw));
@@ -579,6 +652,7 @@ export class Engine {
                         messages: [...messages, antiEchoNudge],
                         temperature: this.settings.model?.temperature ?? 0.9,
                         numPredict: genNumPredict,
+                    numCtx,
                         think,
                     });
                     const reparsed = extractFollowUpMarker(cleanModelOutput(retry));
@@ -624,6 +698,7 @@ export class Engine {
                         }],
                         temperature: this.settings.model?.temperature ?? 0.9,
                         numPredict: genNumPredict,
+                    numCtx,
                         think,
                     });
                     const parsed = extractFollowUpMarker(cleanModelOutput(rawNext));

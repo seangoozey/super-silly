@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.0';
+const EXT_VERSION = '0.6.1';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -124,7 +124,21 @@ function dashboardHtml() {
                         <label>Your name (as characters see you)</label>
                         <span><input type="text" id="autolife_persona_name" placeholder="auto — your default ST persona">
                         <button type="button" class="menu_button autolife-btn" id="autolife_persona_save">Save</button></span>
+                        <label>Availability shapes tone</label>
+                        <input type="checkbox" id="autolife_availability_tone" checked>
+                        <label>Relationship speeds replies</label>
+                        <input type="checkbox" id="autolife_relationship_speed" checked>
+                        <label>Quiet hours (your sleep)</label>
+                        <span><input type="checkbox" id="autolife_quiet_enabled">
+                        <input type="text" id="autolife_quiet_start" style="width:52px" placeholder="23:00"> –
+                        <input type="text" id="autolife_quiet_end" style="width:52px" placeholder="07:00">
+                        <input type="text" id="autolife_quiet_tz" style="width:110px" placeholder="America/New_York"></span>
                     </div>
+                    <div style="margin-top:6px;">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_engine_save">Save engine settings</button>
+                        <span id="autolife_engine_msg" class="autolife-muted"></span>
+                    </div>
+                    <div class="autolife-muted">Tone: busy characters text short/distracted, relaxed evenings may ramble. Speed: close relationships reply up to 3x faster. Quiet hours: no engine texts inside the window; due replies hold until it ends.</div>
                 </div>
 
                 <div class="autolife-section">
@@ -166,6 +180,8 @@ function dashboardHtml() {
                             <option value="on">on — model reasons first (thinking models)</option>
                             <option value="auto">auto — model template default</option>
                         </select>
+                        <label>Context window (num_ctx, 0=default)</label>
+                        <input type="number" id="autolife_num_ctx" min="0" max="131072" step="1024" value="0">
                     </div>
                     <div style="margin-top:6px;">
                         <button type="button" class="menu_button autolife-btn" id="autolife_model_use">Use</button>
@@ -351,6 +367,15 @@ function panelModalHtml() {
                     </div>
                     <pre id="autolife_prompt_preview" class="autolife-audit-feed" style="display:none; white-space:pre-wrap;"></pre>
                 </div>
+
+                <div class="autolife-section">
+                    <h4>About {{user}} <span class="autolife-muted">(what this character knows about you — saved to the card)</span></h4>
+                    <div class="autolife-muted">Relationship history, facts about you, shared references. Injected as its own prompt section ({{about_user}} in templates). Keep scenario for the present encounter; put what they *know about you* here.</div>
+                    <textarea id="autolife_about_user" rows="4" style="width:100%; margin-top:4px;" placeholder="we met at Maria's wedding in 2023; you work nights as a nurse; you owe me tacos from the bet"></textarea>
+                    <div style="margin-top:4px;">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_about_user_save">Save with card</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>`;
@@ -436,6 +461,7 @@ async function refreshPanel() {
             $('#autolife_mem_k').val(a.memory?.retrieve_count ?? 3);
             $('#autolife_mem_max').val(a.memory?.max_entries ?? 4000);
             $('#autolife_prompt_card').val(a.prompt?.template ?? '');
+            $('#autolife_about_user').val(a.about_user ?? '');
             $('#autolife_sched_rows').html((a.schedule.length ? a.schedule : []).map(schedRowHtml).join(''));
         }
     } catch (err) {
@@ -668,6 +694,7 @@ function buildAutolifeFromForm() {
             max_entries: Number($('#autolife_mem_max').val()),
         },
         prompt: { template: $('#autolife_prompt_card').val() },
+        about_user: $('#autolife_about_user').val().slice(0, 2000),
     };
 }
 
@@ -974,6 +1001,13 @@ async function loadTelegramSection() {
         const { settings } = await api('/settings');
         $('#autolife_persona_name').val(settings.persona?.name ?? '');
         $('#autolife_prompt_global').val(settings.prompt?.template ?? '');
+        $('#autolife_availability_tone').prop('checked', settings.engine?.availability_tone !== false);
+        $('#autolife_relationship_speed').prop('checked', settings.engine?.relationship_speed !== false);
+        $('#autolife_quiet_enabled').prop('checked', !!settings.quiet_hours?.enabled);
+        $('#autolife_quiet_start').val(settings.quiet_hours?.start ?? '23:00');
+        $('#autolife_quiet_end').val(settings.quiet_hours?.end ?? '07:00');
+        $('#autolife_quiet_tz').val(settings.quiet_hours?.timezone ?? 'UTC');
+        $('#autolife_num_ctx').val(settings.model?.num_ctx ?? 0);
         $('#autolife_tg_token').attr('placeholder', settings.telegram?.hasToken ? settings.telegram.token : '123456:ABC… (from @BotFather)');
         $('#autolife_tg_ids').val((settings.telegram?.allowed_chat_ids ?? []).join(', '));
         $('#autolife_tg_bots').val((settings.telegram?.bots ?? [])
@@ -1226,6 +1260,7 @@ function wireEvents() {
     });
 
     $(document).on('click', '#autolife_prompt_card_save', () => saveCard());
+    $(document).on('click', '#autolife_about_user_save', () => saveCard());
 
     $(document).on('click', '#autolife_prompt_preview_btn', async () => {
         if (!panelChar) return;
@@ -1283,6 +1318,26 @@ function wireEvents() {
     });
 
     // --- telegram ---
+    $('#autolife_engine_save').on('click', async () => {
+        try {
+            await api('/settings', 'POST', {
+                engine: {
+                    availability_tone: $('#autolife_availability_tone').prop('checked'),
+                    relationship_speed: $('#autolife_relationship_speed').prop('checked'),
+                },
+                quiet_hours: {
+                    enabled: $('#autolife_quiet_enabled').prop('checked'),
+                    start: $('#autolife_quiet_start').val().trim() || '23:00',
+                    end: $('#autolife_quiet_end').val().trim() || '07:00',
+                    timezone: $('#autolife_quiet_tz').val().trim() || 'UTC',
+                },
+            });
+            $('#autolife_engine_msg').text('saved ✓');
+            refreshStatus();
+        } catch (e) { $('#autolife_engine_msg').text(e.message); }
+        setTimeout(() => $('#autolife_engine_msg').text(''), 4000);
+    });
+
     $('#autolife_persona_save').on('click', async () => {
         try {
             await api('/settings', 'POST', { persona: { name: $('#autolife_persona_name').val() } });
@@ -1320,6 +1375,7 @@ function wireEvents() {
     $('#autolife_model_use').on('click', async () => {
         try {
             await api('/model/use', 'POST', { model: chosenModel() });
+            api('/settings', 'POST', { model: { num_ctx: Number($('#autolife_num_ctx').val()) || 0 } }).catch(() => {});
             toast(`Switched model to ${chosenModel()}`);
             loadModelSection();
         } catch (e) { toast(e.message); }
