@@ -108,7 +108,10 @@ export class OllamaClient {
                 const obj = JSON.parse(line);
                 if (obj.error) throw new Error(`Pull "${name}" failed: ${obj.error}`);
                 const info = { status: obj.status };
-                if (obj.status === 'downloading' && obj.digest) {
+                // Download progress lines: older Ollama says "downloading",
+                // 0.32.x says "pulling <id>" — both carry digest/total/completed.
+                const isProgressLine = obj.digest && (obj.status === 'downloading' || obj.status.startsWith('pulling ') || (obj.total !== undefined && obj.completed !== undefined));
+                if (isProgressLine) {
                     const layer = layers.get(obj.digest) ?? { total: 0, completed: 0 };
                     if (obj.total) layer.total = obj.total;
                     if (obj.completed !== undefined) layer.completed = obj.completed;

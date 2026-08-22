@@ -24,9 +24,9 @@ function pullFetch(lines, { splitMidLine = true } = {}) {
 test('pull() normalizes layer progress into aggregate percent/bytes', async () => {
     const client = new OllamaClient({ fetchImpl: pullFetch([
         { status: 'pulling manifest' },
-        { status: 'downloading', digest: 'sha256:a', total: 1000, completed: 250 },
-        { status: 'downloading', digest: 'sha256:a', total: 1000, completed: 1000 },
-        { status: 'downloading', digest: 'sha256:b', total: 3000, completed: 1500 },
+        { status: 'pulling 797b70c4edf8', digest: 'sha256:a', total: 1000, completed: 250 },
+        { status: 'pulling 797b70c4edf8', digest: 'sha256:a', total: 1000, completed: 1000 },
+        { status: 'pulling c71d239df917', digest: 'sha256:b', total: 3000, completed: 1500 },
         { status: 'verifying sha256:b' },
         { status: 'success' },
     ]) });
@@ -38,7 +38,7 @@ test('pull() normalizes layer progress into aggregate percent/bytes', async () =
     assert.equal(events.length, 6);
     assert.deepEqual(events[0], { status: 'pulling manifest' });
 
-    assert.equal(events[1].status, 'downloading');
+    assert.equal(events[1].status, 'pulling 797b70c4edf8');
     assert.equal(events[1].layerCount, 1);
     assert.equal(events[1].total, 1000);
     assert.equal(events[1].completed, 250);
@@ -60,6 +60,32 @@ test('pull() surfaces ollama errors as rejections', async () => {
         { error: 'blob not found' },
     ]) });
     await assert.rejects(() => client.pull('nope', () => {}), /blob not found/);
+});
+
+test('pull() accepts both progress dialects (downloading + pulling <id>)', async () => {
+    const lines = [
+        { status: 'pulling manifest' },
+        { status: 'downloading', digest: 'sha256:x', total: 500, completed: 100 },
+        { status: 'pulling abc123', digest: 'sha256:y', total: 500, completed: 500 },
+        { status: 'success' },
+    ];
+    const ndjson = lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
+    const chunks = [ndjson.slice(0, 20), ndjson.slice(20)];
+    const client = new OllamaClient({
+        fetchImpl: async () => ({
+            ok: true,
+            body: (async function* () {
+                for (const c of chunks.map((c) => new TextEncoder().encode(c))) yield c;
+            })(),
+        }),
+    });
+    const events = [];
+    await client.pull('m', (p) => events.push(p));
+    const dl = events.find((e) => e.status === 'downloading');
+    assert.equal(dl.percent, 20); // 100 / (500+500)
+    const pl = events.find((e) => e.status === 'pulling abc123');
+    assert.equal(pl.percent, 60); // 600 / 1000
+    assert.equal(events[events.length - 1].status, 'success');
 });
 
 test('pull() works with a non-streaming fetch stub', async () => {
