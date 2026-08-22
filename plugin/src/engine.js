@@ -53,6 +53,8 @@ export class Engine {
                 top_k: Number.isFinite(Number(m.top_k)) && Number(m.top_k) >= 0 ? Number(m.top_k) : 0,
                 repeat_penalty: Number(m.repeat_penalty) > 0 ? Number(m.repeat_penalty) : 1,
             };
+            // llama.cpp backend: context window is a server-launch flag
+            if (this.ollama.manager) this.ollama.manager.numCtx = Number(m.num_ctx) > 0 ? Number(m.num_ctx) : 8192;
         }
     }
 

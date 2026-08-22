@@ -19,6 +19,7 @@ services:
     ports:
       - "${SUPERSILLY_PORT:-8000}:8000"
     environment:
+      AUTOLIFE_BACKEND: ${AUTOLIFE_BACKEND:-ollama}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M}
       OLLAMA_FALLBACK_MODEL: ${OLLAMA_FALLBACK_MODEL:-hf.co/ReadyArt/Dark-Desires-12B-v1.0-GGUF:Q4_K_M}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
@@ -32,6 +33,7 @@ services:
       - ${SUPERSILLY_BASE:-./server-data}/config:/home/node/app/config
       - ${SUPERSILLY_BASE:-./server-data}/data:/home/node/app/data
       - ${SUPERSILLY_BASE:-./server-data}/ollama:/root/.ollama
+      - ${SUPERSILLY_BASE:-./server-data}/models:/models
     # GPU reservation (needs nvidia-container-toolkit on the host):
     #   sudo apt install nvidia-container-toolkit
     #   sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker

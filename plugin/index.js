@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Engine } from './src/engine.js';
 import { OllamaClient } from './src/llm.js';
+import { LlamaCppClient } from './src/llamacpp.js';
 import { ChatStore } from './src/chat-store.js';
 import { CardRegistry } from './src/cards.js';
 import { StateStore } from './src/state.js';
@@ -49,7 +50,12 @@ fs.mkdirSync(path.join(USER_DIR, 'characters'), { recursive: true });
 // Pre-connect the web UI to Ollama: fresh ST boots with AI Horde selected and
 // no model, so manual web chatting fails with "No Horde model selected".
 // Only touches the untouched default; any deliberate API choice is left alone.
+// (llama.cpp backend: skip — its server is lazy and the UI connection is
+// configured by hand as a Custom OpenAI-compatible source when needed.)
+const BACKEND = (process.env.AUTOLIFE_BACKEND ?? 'ollama').toLowerCase();
+
 function seedWebUiConnection() {
+    if (BACKEND === 'llamacpp' || BACKEND === 'llama.cpp') return;
     try {
         const p = path.join(USER_DIR, 'settings.json');
         const s = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -66,7 +72,16 @@ seedWebUiConnection();
 const store = new StateStore(path.join(USER_DIR, 'autolife'));
 const chatStore = new ChatStore({ dataRoot: DATA_ROOT, userHandle: USER_HANDLE });
 const cards = new CardRegistry(path.join(USER_DIR, 'characters'));
-const ollama = new OllamaClient({ baseUrl: process.env.OLLAMA_URL, log });
+// Backend switch (env): 'ollama' (default) or 'llamacpp' — needed for Qwen3.5
+// models (Dark-Scarlett) that Ollama can't load, plus top_n_sigma/XTC samplers.
+// The variable is named `ollama` everywhere downstream because it's the
+// engine's backend handle; both clients expose the same method surface.
+const ollama = (BACKEND === 'llamacpp' || BACKEND === 'llama.cpp')
+    ? new LlamaCppClient({ log, modelsDir: process.env.LLAMACPP_MODELS })
+    : new OllamaClient({ baseUrl: process.env.OLLAMA_URL, log });
+if (ollama.manager) {
+    log(`backend: llama.cpp — models in ${ollama.modelsDir}, llama-server on :${ollama.manager.chatPort} (chat) / :${ollama.manager.embedPort} (embed)`);
+}
 const memory = new MemoryStore(path.join(USER_DIR, 'autolife', 'memory'), (m) => log(`memory: ${m}`));
 
 // ---- SSE hub (feeds the UI extension and mirrors engine events) ----
@@ -181,6 +196,7 @@ async function init(router) {
 async function exit() {
     engine.stop();
     stopTransport();
+    ollama.manager?.stop();
     for (const res of sseClients) {
         try {
             res.end();

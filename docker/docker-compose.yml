@@ -19,6 +19,7 @@ services:
     ports:
       - "${SUPERSILLY_PORT:-8000}:8000"
     environment:
+      AUTOLIFE_BACKEND: ${AUTOLIFE_BACKEND:-ollama}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M}
       OLLAMA_FALLBACK_MODEL: ${OLLAMA_FALLBACK_MODEL:-hf.co/ReadyArt/Dark-Desires-12B-v1.0-GGUF:Q4_K_M}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
@@ -30,6 +31,7 @@ services:
       SILLYTAVERN_BASICAUTHUSER_PASSWORD: ${SILLYTAVERN_BASICAUTHUSER_PASSWORD:-}
     volumes:
       - ollama:/root/.ollama
+      - models:/models
       - st-config:/home/node/app/config
       - st-data:/home/node/app/data
     # gpus: all
@@ -43,5 +45,6 @@ services:
 
 volumes:
   ollama:
+  models:
   st-config:
   st-data:

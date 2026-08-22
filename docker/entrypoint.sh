@@ -40,6 +40,9 @@ node src/server-init.js
 
 # Backstop for the plugin's web-UI pre-connect (covers a very first boot where
 # the plugin runs before settings.json exists): re-check shortly after start.
+# Skipped for the llamacpp backend (no always-on local API to pre-connect to).
+BACKEND="${AUTOLIFE_BACKEND:-ollama}"
+if [ "$BACKEND" != "llamacpp" ] && [ "$BACKEND" != "llama.cpp" ]; then
 (
     sleep 15
     node -e "
@@ -56,46 +59,56 @@ try {
 } catch (e) { /* nothing to do */ }
 "
 ) &
+fi
 
-# ---------- 2. ollama ----------
-log "starting ollama (supervised)"
-# Watchdog keeps ollama alive for the container's lifetime — on an unattended
-# server a wedged/killed ollama must restart itself or the whole system goes
-# quietly dark (engine retries fail into backoff, characters go silent).
-(
-    while true; do
-        ollama serve &
-        OLLAMA_PID=$!
-        wait "$OLLAMA_PID"
-        echo "[supersilly] ollama exited (code $?) — restarting in 5s"
-        sleep 5
-    done
-) &
+# ---------- 2+3. backend ----------
+if [ "$BACKEND" = "llamacpp" ] || [ "$BACKEND" = "llama.cpp" ]; then
+    # llama.cpp mode: the Autolife plugin supervises llama-server itself
+    # (lazy spawn on first generation, model swap on switch, respawn after a
+    # crash) and downloads GGUFs on demand with progress in the panel. Nothing
+    # to start here — just make sure the models dir exists on the volume.
+    log "backend: llama.cpp — llama-server supervised by the Autolife plugin"
+    mkdir -p "${LLAMACPP_MODELS:-/models}"
+else
+    log "starting ollama (supervised)"
+    # Watchdog keeps ollama alive for the container's lifetime — on an unattended
+    # server a wedged/killed ollama must restart itself or the whole system goes
+    # quietly dark (engine retries fail into backoff, characters go silent).
+    (
+        while true; do
+            ollama serve &
+            OLLAMA_PID=$!
+            wait "$OLLAMA_PID"
+            echo "[supersilly] ollama exited (code $?) — restarting in 5s"
+            sleep 5
+        done
+    ) &
 
-log "waiting for ollama on :11434"
-for i in $(seq 1 90); do
-    if curl -sf http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
-        log "ollama is up ($(curl -sf http://127.0.0.1:11434/api/version 2>/dev/null || true))"
-        break
-    fi
-    sleep 2
-done
-
-# ---------- 3. model pull (background, with fallback) ----------
-(
-    sleep 3
-    log "pulling model: $OLLAMA_MODEL"
-    if ollama pull "$OLLAMA_MODEL"; then
-        log "model ready: $OLLAMA_MODEL"
-    else
-        log "primary model pull failed — trying fallback: $OLLAMA_FALLBACK_MODEL"
-        if ollama pull "$OLLAMA_FALLBACK_MODEL"; then
-            log "fallback model ready: $OLLAMA_FALLBACK_MODEL"
-        else
-            log "WARNING: both model pulls failed. Start manually later:  docker exec <container> ollama pull <model>"
+    log "waiting for ollama on :11434"
+    for i in $(seq 1 90); do
+        if curl -sf http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
+            log "ollama is up ($(curl -sf http://127.0.0.1:11434/api/version 2>/dev/null || true))"
+            break
         fi
-    fi
-) &
+        sleep 2
+    done
+
+    # ---------- 3. model pull (background, with fallback) ----------
+    (
+        sleep 3
+        log "pulling model: $OLLAMA_MODEL"
+        if ollama pull "$OLLAMA_MODEL"; then
+            log "model ready: $OLLAMA_MODEL"
+        else
+            log "primary model pull failed — trying fallback: $OLLAMA_FALLBACK_MODEL"
+            if ollama pull "$OLLAMA_FALLBACK_MODEL"; then
+                log "fallback model ready: $OLLAMA_FALLBACK_MODEL"
+            else
+                log "WARNING: both model pulls failed. Start manually later:  docker exec <container> ollama pull <model>"
+            fi
+        fi
+    ) &
+fi
 
 # ---------- 4. SillyTavern ----------
 log "starting SillyTavern on :8000"
