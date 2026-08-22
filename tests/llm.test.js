@@ -104,6 +104,32 @@ test('cleanModelOutput strips thinking blocks', () => {
     assert.equal(cleanModelOutput('plain reply'), 'plain reply');
 });
 
+test('sanitizeTextingOutput enforces plain-text formatting mechanically', async () => {
+    const { sanitizeTextingOutput } = await import('../plugin/src/llm.js');
+    // asterisk actions removed
+    assert.equal(sanitizeTextingOutput('*sighs and looks away* hey, it\'s me'), 'hey, it\'s me');
+    // inline actions removed mid-text
+    assert.equal(sanitizeTextingOutput('so tired *yawns* today was a lot'), 'so tired today was a lot');
+    // quotes wrapping the whole paragraph stripped
+    assert.equal(sanitizeTextingOutput('"Hi cutey. How are you doing?"'), 'Hi cutey. How are you doing?');
+    // multi-paragraph: each paragraph handled independently
+    assert.equal(
+        sanitizeTextingOutput('"first text"\n\n*walks to the window*\n\nsecond text'),
+        'first text\n\nsecond text',
+    );
+    // bracketed meta lines removed
+    assert.equal(sanitizeTextingOutput('[Continue from the last system prompt message]\nactual text'), 'actual text');
+    // plain text passes through untouched
+    assert.equal(sanitizeTextingOutput('plain text stays 100% intact'), 'plain text stays 100% intact');
+});
+
+test('extractFollowUpMarker detects and strips the burst marker', async () => {
+    const { extractFollowUpMarker } = await import('../plugin/src/llm.js');
+    assert.deepEqual(extractFollowUpMarker('hey, guess what\n{follow-up}'), { text: 'hey, guess what', more: true });
+    assert.deepEqual(extractFollowUpMarker('plain end'), { text: 'plain end', more: false });
+    assert.deepEqual(extractFollowUpMarker('{Follow-Up} one more thing'), { text: 'one more thing', more: true });
+});
+
 test('splitIntoTexts turns paragraphs into texting bursts', async () => {
     const { splitIntoTexts } = await import('../plugin/src/llm.js');
     assert.deepEqual(splitIntoTexts('one text only'), ['one text only']);

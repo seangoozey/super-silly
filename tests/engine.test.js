@@ -76,11 +76,12 @@ function buildHarness({ card, now = new Date(Date.UTC(2026, 0, 15, 14, 0)), rngV
         const n = Math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2) || 1;
         return v.map((x) => x / n);
     };
+    const replyQueue = Array.isArray(reply) ? [...reply] : null;
     const ollama = {
         hasModel: async () => true,
         chat: async (req) => {
             chatCalls.push(req.messages);
-            return reply;
+            return replyQueue ? (replyQueue.shift() ?? 'ok') : reply;
         },
         embed: async (text) => fakeEmbed(text),
     };
@@ -367,6 +368,25 @@ test('AUTOLIFE_START_STOPPED env overrides the boot policy', async () => {
     } finally {
         delete process.env.AUTOLIFE_START_STOPPED;
     }
+});
+
+test('bursts: {follow-up} marker produces multiple texts and chat messages', async () => {
+    const card = characterCard('Bursty');
+    const replies = ['hey, guess what {follow-up}', 'i got the job!!'];
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: replies });
+    await h.engine.onInbound({ character: 'Bursty', mes: '??', source: 'telegram' });
+
+    const state = stateOf(h.store, 'Bursty');
+    const msgs = h.chatStore.readMessages('Bursty', state.chatFile);
+    const charMsgs = msgs.filter((m) => !m.is_user);
+    // greeting + two burst texts as separate messages
+    assert.equal(charMsgs.length, 3);
+    assert.equal(charMsgs[1].mes, 'hey, guess what');
+    assert.equal(charMsgs[2].mes, 'i got the job!!');
+    // delivered as two paced texts
+    assert.deepEqual(h.delivered.map((d) => d.text.replace(/^You: /, '')), ['hey, guess what', 'i got the job!!']);
+    // audit notes the burst
+    assert.ok(h.store.readAudit('Bursty', 50).some((a) => a.kind === 'sent' && /2 texts/.test(a.text)));
 });
 
 test('status() summarizes life state', async () => {

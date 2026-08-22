@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01 } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, splitIntoTexts, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, splitIntoTexts, NUM_PREDICT } from './llm.js';
 import { messageKey } from './memory.js';
 
 const MINUTE = 60_000;
@@ -169,7 +169,7 @@ export class Engine {
             return false;
         }
         const minutes = BACKOFF_MINUTES[Math.min(attempts, BACKOFF_MINUTES.length) - 1];
-        state.pendingReply = { dueAt: new Date(now.getTime() + minutes * MINUTE).toISOString(), attempts };
+        state.pendingReply = { dueAt: new Date(now.getTime() + minutes * MINUTE).toISOString(), attempts, sinceAt: state.pendingReply?.sinceAt ?? now.toISOString() };
         this.store.saveState(state);
         this.#audit(entry.name, 'gen_retry', `${kind} failed (${cause}) — retry ${attempts}/5 in ~${minutes} min`);
         return true;
@@ -337,7 +337,7 @@ export class Engine {
         }
 
         const delayMinutes = sampleDelayMinutes(entry.autolife, life, this.rng);
-        state.pendingReply = { dueAt: new Date(now.getTime() + delayMinutes * MINUTE).toISOString(), attempts: 0 };
+        state.pendingReply = { dueAt: new Date(now.getTime() + delayMinutes * MINUTE).toISOString(), attempts: 0, sinceAt: now.toISOString() };
         this.store.saveState(state);
         this.log(`"${entry.name}" will reply in ~${delayMinutes.toFixed(0)} min (${life.activity})`);
         this.emit('deferred', { character: entry.name, dueAt: state.pendingReply.dueAt });
@@ -398,14 +398,25 @@ export class Engine {
         // 1. fire due delayed replies
         if (state.pendingReply) {
             if (new Date(state.pendingReply.dueAt).getTime() <= now.getTime()) {
+                const sinceAt = state.pendingReply.sinceAt ?? null;
+                const lagMin = sinceAt ? Math.round((now.getTime() - new Date(sinceAt).getTime()) / MINUTE) : 0;
                 state.pendingReply = null;
                 if (this.inFlight.has(entry.name)) {
-                    state.pendingReply = { dueAt: new Date(now.getTime() + MINUTE).toISOString(), attempts: 0 }; // retry after current generation
+                    state.pendingReply = { dueAt: new Date(now.getTime() + MINUTE).toISOString(), attempts: 0, sinceAt }; // retry after current generation
                     this.store.saveState(state);
                 } else {
                     this.store.saveState(state);
                     this.#audit(entry.name, 'pending_fired', 'delayed reply is due — generating now');
-                    const ok = await this.#generate(entry, state, 'reply', now);
+                    // long-delayed replies know how late they are
+                    let extra;
+                    if (lagMin >= 90) {
+                        const lagText = lagMin >= 120 ? `${(lagMin / 60).toFixed(lagMin % 60 ? 1 : 0)} hours` : `${lagMin} minutes`;
+                        extra = {
+                            system: `(Private: ${this.chatStore.userName} texted you ${lagText} ago and you are only now replying — you were busy or away. Weave the delay in naturally if it fits; do not over-apologize.)`,
+                            gapNote: `replied after ${lagText}`,
+                        };
+                    }
+                    const ok = await this.#generate(entry, state, 'reply', now, extra);
                     if (!ok) this.#repent(entry, state, now, 'reply', 'generation failed');
                 }
             }
@@ -483,9 +494,9 @@ export class Engine {
 
     // ------------------------------------------------------------ generation
 
-    async #generate(entry, state, kind, now) {
+    async #generate(entry, state, kind, now, extra) {
         const key = entry.name;
-        const promise = this.#generateInner(entry, state, kind, now)
+        const promise = this.#generateInner(entry, state, kind, now, extra)
             .catch((err) => {
                 this.log(`"${key}" generation (${kind}) failed: ${err?.stack ?? err}`);
                 this.#audit(key, 'gen_failed', `generation (${kind}) failed: ${String(err?.message ?? err).slice(0, 200)}`);
@@ -496,7 +507,7 @@ export class Engine {
         return promise;
     }
 
-    async #generateInner(entry, state, kind, now) {
+    async #generateInner(entry, state, kind, now, extra) {
         const startedMs = Date.now();
         const life = evaluate(entry.autolife, now);
         this.#ensureChat(entry, state);
@@ -507,6 +518,7 @@ export class Engine {
             history = [{ is_user: false, mes: this.chatStore.substituteMacros(entry.card.data.first_mes, entry.name) }];
         }
 
+        const ctxTemplate = entry.autolife.prompt?.template?.trim() || this.settings.prompt?.template?.trim() || null;
         const system = buildSystemPrompt({
             card: entry.card,
             autolife: entry.autolife,
@@ -514,7 +526,7 @@ export class Engine {
             relationshipScore: state.relationship,
             journal: state.journal,
             userName: this.chatStore.userName,
-            template: entry.autolife.prompt?.template?.trim() || this.settings.prompt?.template?.trim() || null,
+            template: ctxTemplate,
         });
 
         const numPredict = NUM_PREDICT[entry.autolife.behavior?.avg_message_length ?? 'short'] ?? 160;
@@ -531,10 +543,12 @@ export class Engine {
             userName: this.chatStore.userName,
             kind,
             memory: memoryBlock,
+            extra: extra?.system,
         });
 
         let text = '';
         let usedModel = null;
+        let firstMore = false;
         for (const model of candidates) {
             try {
                 if (!(await this.ollama.hasModel(model))) {
@@ -551,17 +565,21 @@ export class Engine {
                     numPredict: genNumPredict,
                     think,
                 });
-                text = cleanModelOutput(raw);
+                const parsed = extractFollowUpMarker(cleanModelOutput(raw));
+                text = sanitizeTextingOutput(parsed.text);
+                firstMore = parsed.more;
                 if (!text) {
                     // one nudge retry — models occasionally answer with empty strings
                     const retry = await this.ollama.chat({
                         model,
-                        messages: [...messages, { role: 'assistant', content: '(continue — send the actual text message now)' }, { role: 'user', content: '...' }],
+                        messages: [...messages, { role: 'system', content: '(Your last reply was empty or contained no message text. Send the actual text message now — plain words only, no formatting.)' }],
                         temperature: this.settings.model?.temperature ?? 0.9,
                         numPredict: genNumPredict,
                         think,
                     });
-                    text = cleanModelOutput(retry);
+                    const reparsed = extractFollowUpMarker(cleanModelOutput(retry));
+                    text = sanitizeTextingOutput(reparsed.text);
+                    firstMore = reparsed.more;
                 }
                 if (text) {
                     usedModel = model;
@@ -581,11 +599,48 @@ export class Engine {
             this.#audit(entry.name, 'gen_failed', `generation (${kind}) returned empty output after retry — all candidate models exhausted`);
             return false;
         }
-        if (text.length > 1500) text = text.slice(0, 1500).trim();
 
-        const charMsg = this.chatStore.characterMessage(entry.name, text, now, { autolife_kind: kind });
-        this.chatStore.appendMessage(entry.name, state.chatFile, charMsg);
-        this.#remember(entry, state.chatFile, 'assistant', text, charMsg.send_date);
+        // {follow-up} burst protocol: the model may mark a text to signal it
+        // wants to send another one right away (a real person's double-text).
+        // Falls out of the loop's `parsed.more` via firstMore below.
+        const texts = [text.slice(0, 1500).trim()];
+        const probe = firstMore || this.rng.float() < 0.25; // model signalled, or engine-side chance
+        if (probe) {
+            let burstMessages = [...messages, { role: 'assistant', content: texts[0] }];
+            for (let i = 0; i < 2; i++) {
+                try {
+                    const rawNext = await this.ollama.chat({
+                        model: usedModel,
+                        messages: [...burstMessages, {
+                            role: 'system',
+                            content: `(You just sent that text moments ago and naturally have more to say. Send exactly ONE more short text now — plain text only. End with {follow-up} ONLY if you genuinely have yet another text after this one; otherwise no marker.)`,
+                        }],
+                        temperature: this.settings.model?.temperature ?? 0.9,
+                        numPredict: genNumPredict,
+                        think,
+                    });
+                    const parsed = extractFollowUpMarker(cleanModelOutput(rawNext));
+                    const piece = sanitizeTextingOutput(parsed.text).slice(0, 1500).trim();
+                    if (!piece) break;
+                    texts.push(piece);
+                    burstMessages = [...burstMessages, { role: 'assistant', content: piece }];
+                    if (!parsed.more) break;
+                } catch (err) {
+                    this.log(`follow-up burst for "${entry.name}" failed: ${err.message}`);
+                    break;
+                }
+            }
+        }
+
+        // flatten any multi-paragraph texts into individual sendable texts
+        const sendTexts = texts.flatMap((t) => splitIntoTexts(t));
+
+        // each burst text is its own chat message (and its own memory entry)
+        for (const part of sendTexts) {
+            const charMsg = this.chatStore.characterMessage(entry.name, part, now, { autolife_kind: kind });
+            this.chatStore.appendMessage(entry.name, state.chatFile, charMsg);
+            this.#remember(entry, state.chatFile, 'assistant', part, charMsg.send_date);
+        }
         state.lastCharMessageAt = now.toISOString();
         state.lastContactAt = now.toISOString();
         if (kind === 'initiative') {
@@ -595,16 +650,22 @@ export class Engine {
         }
         this.store.saveState(state);
 
-        this.log(`"${entry.name}" ${kind} → "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}" [${usedModel}]`);
-        this.emit('character_message', { character: entry.name, kind, mes: text, chatFile: state.chatFile });
+        const fullText = sendTexts.join('\n\n');
+        this.log(`"${entry.name}" ${kind} → "${fullText.slice(0, 60)}${fullText.length > 60 ? '…' : ''}" [${usedModel}]`);
+        this.emit('character_message', { character: entry.name, kind, mes: fullText, chatFile: state.chatFile });
         const kindLabel = { reply: 'replied', initiative: 'texted you first (initiative)', catchup: 'caught up on the missed message', followup: 'sent a follow-up nudge' }[kind] ?? kind;
-        const parts = splitIntoTexts(text);
-        this.#audit(entry.name, 'sent', `${kindLabel} — ${parts.length > 1 ? `${parts.length} texts, starting "${parts[0].slice(0, 60)}…"` : `"${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"`} [${usedModel}, ${Date.now() - startedMs} ms]`);
+        const journalCount = entry.autolife.journal?.enabled && state.journal?.length
+            && (!ctxTemplate || /\{\{journal\}\}/i.test(ctxTemplate)) ? state.journal.length : 0;
+        this.#audit(entry.name, 'sent', `${kindLabel} — ${sendTexts.length > 1 ? `${sendTexts.length} texts, starting "${sendTexts[0].slice(0, 60)}…"` : `"${sendTexts[0].slice(0, 80)}${sendTexts[0].length > 80 ? '…' : ''}"`}`
+            + `${journalCount ? ` · journal: ${journalCount} notes in prompt` : ''}`
+            + `${memoryBlock ? ' · memory recalled' : ''}`
+            + `${extra?.gapNote ? ` · ${extra.gapNote}` : ''}`
+            + ` [${usedModel}, ${Date.now() - startedMs} ms]`);
 
         for (const t of this.transports) {
             try {
-                // one text per paragraph — the per-chat queue paces them ~1s apart
-                for (const part of parts) {
+                // one text per burst part — the per-chat queue paces them ~1s apart
+                for (const part of sendTexts) {
                     await t.deliver?.(entry.name, part, { kind });
                 }
             } catch (err) {

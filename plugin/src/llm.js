@@ -311,7 +311,8 @@ export function promptSections(ctx) {
         sections.journal = null;
     }
 
-    sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions (unless your earlier messages clearly use them), no quotation marks around the message.`;
+    sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions, no quotation marks around the message.`
+        + ' If you want to send another text right away, end your message with {follow-up} — otherwise never write that marker.';
     sections.postHistory = data.post_history_instructions?.trim() ? `Additional standing instructions: ${sub(data.post_history_instructions)}` : null;
 
     return sections;
@@ -398,4 +399,48 @@ export function cleanModelOutput(text) {
     // strip surrounding asterisk-only narration lines
     out = out.replace(/^\*[^*\n]+\*$/gm, '').trim();
     return out;
+}
+
+/**
+ * Mechanical texting-format enforcement (applied after cleanModelOutput):
+ * - removes roleplay actions / stage directions in asterisks or underscores
+ * - removes quotes wrapping a whole paragraph (dialogue formatting)
+ * - removes bracketed meta lines the model sometimes emits
+ *   ("[Continue from the last system prompt message]", "[OOC: ...]")
+ * The prompt asks for plain texts; this guarantees them regardless of
+ * model obedience.
+ */
+export function sanitizeTextingOutput(text) {
+    let out = String(text ?? '');
+    // bracketed meta lines, e.g. [Continue...], (OOC: ...)
+    out = out.replace(/^\s*[\[(]\s*(continue|ooc|note|system|assistant)[^)\]]*[\])]\s*$/gim, '');
+    // asterisk action spans (single-line, non-greedy)
+    out = out.replace(/\*{1,3}[^*\n]{0,500}?\*{1,3}/g, ' ');
+    out = out.replace(/(?<![\w])_[^_\n]{0,200}?_(?![\w])/g, ' ');
+    // quotes wrapping an entire paragraph
+    out = out
+        .split(/\n{2,}/)
+        .map((p) => {
+            let t = p.trim();
+            if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith('“') && t.endsWith('”'))) {
+                t = t.slice(1, -1).trim();
+            }
+            return t;
+        })
+        .filter(Boolean)
+        .join('\n\n');
+    out = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    return out;
+}
+
+/**
+ * The {follow-up} burst protocol: the model ends a text with {follow-up}
+ * when it wants to send another text right away.
+ * @returns {{ text: string, more: boolean }} text with the marker removed
+ */
+export function extractFollowUpMarker(text) {
+    const raw = String(text ?? '');
+    const m = raw.match(/\{\s*follow-?up\s*\}/i);
+    if (!m) return { text: raw.trim(), more: false };
+    return { text: raw.replace(m[0], '').trim(), more: true };
 }
