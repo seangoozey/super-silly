@@ -3,6 +3,31 @@
 
 const API_BASE = 'https://api.telegram.org';
 
+// /audit granularity: every audit kind maps to a group; each level shows a set
+// of groups. 'detail' (journal notes, memory recalls, config churn) appears
+// only at 'full'.
+const AUDIT_GROUPS = {
+    sent: 'messages',
+    deferred: 'decisions', ignored: 'decisions', quick: 'decisions', absorbed: 'decisions',
+    pending_fired: 'decisions', catchup: 'decisions', followup: 'decisions',
+    initiative_roll: 'decisions', initiative_blocked: 'decisions',
+    gen_failed: 'errors', gen_retry: 'errors', gave_up: 'errors',
+    model_fallback: 'errors', echo_blocked: 'errors',
+};
+const AUDIT_LEVELS = {
+    full: ['messages', 'decisions', 'errors', 'detail'],
+    normal: ['messages', 'decisions', 'errors'],
+    min: ['messages', 'errors'],
+};
+export function auditGroup(kind) {
+    return AUDIT_GROUPS[kind] ?? 'detail';
+}
+export function auditLevelAllows(level, kind) {
+    const groups = AUDIT_LEVELS[level];
+    if (!groups) return true; // unknown level: fail open
+    return groups.includes(auditGroup(kind));
+}
+
 export class TelegramTransport {
     /**
      * @param {{ token: string, allowedChatIds: number[], store: object, engine: object,
@@ -201,8 +226,10 @@ export class TelegramTransport {
         if (!this.enabled || !entry?.text) return;
         const bindings = this.myBindings();
         for (const [chatId, b] of Object.entries(bindings)) {
-            if (!b?.audit) continue;
+            const level = b?.audit === true ? 'full' : b?.audit; // legacy boolean
+            if (!level || level === 'off' || level === false) continue;
             if (entry.character && b.character !== entry.character) continue;
+            if (!auditLevelAllows(level, entry.kind)) continue;
             this.send(Number(chatId), `🔎 ${entry.text}`).catch(() => {});
         }
     }

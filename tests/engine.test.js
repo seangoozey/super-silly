@@ -435,6 +435,46 @@ test('evolve: auto_apply approves immediately and shapes the next prompt', async
     assert.ok(sysMsg.content.includes('trust you more'));
 });
 
+test('purge resets state to card seed and clears the memory index', async () => {
+    const card = characterCard('Purgy', { relationship: { initial: 55 }, initiative: { enabled: true, min_gap_minutes: 60, max_per_day: 1, followup_on_unread_hours: 0 } });
+    const h = buildHarness({ card, rngValues: [0.99, 0.0] });
+
+    // build up state: messages, memory entries, relationship growth, journal
+    await h.engine.onInbound({ character: 'Purgy', mes: 'hello there old friend', source: 'telegram' });
+    let st = stateOf(h.store, 'Purgy');
+    assert.ok(st.relationship > 55, 'relationship grew');
+    assert.ok(h.memory.count('Purgy', 'nomic-embed-text') >= 2, 'memory index populated');
+    st.journal = [{ ts: new Date().toISOString(), text: 'secret note' }];
+    st.lastUserMessageAt = new Date().toISOString();
+    h.store.saveState(st);
+
+    await h.engine.purgeCharacter('Purgy');
+
+    // read through the engine's seeding path (card initial 55, not the helper's 20)
+    st = h.store.loadState('Purgy', { initialRelationship: 55 });
+    assert.equal(st.relationship, 55, 'relationship reset to card seed');
+    assert.equal(st.enabled, true, 're-created live');
+    assert.equal(st.journal.length, 0, 'journal wiped');
+    assert.equal(st.lastUserMessageAt, null, 'timestamps wiped');
+    assert.equal(h.memory.count('Purgy', 'nomic-embed-text'), 0, 'memory index wiped');
+    assert.ok(h.store.readAudit('Purgy', 50).some((a) => a.kind === 'purged'));
+});
+
+test('audit granularity levels filter kinds', async () => {
+    const { auditLevelAllows, auditGroup } = await import('../plugin/src/telegram.js');
+    assert.equal(auditGroup('sent'), 'messages');
+    assert.equal(auditGroup('deferred'), 'decisions');
+    assert.equal(auditGroup('journal'), 'detail');
+    assert.equal(auditGroup('model_fallback'), 'errors');
+
+    assert.ok(auditLevelAllows('full', 'journal'));
+    assert.ok(!auditLevelAllows('normal', 'journal'), 'normal hides journal notes');
+    assert.ok(auditLevelAllows('normal', 'deferred'));
+    assert.ok(auditLevelAllows('min', 'sent'));
+    assert.ok(!auditLevelAllows('min', 'deferred'), 'min hides decisions');
+    assert.ok(auditLevelAllows('min', 'gen_failed'), 'min keeps errors');
+});
+
 test('status() summarizes life state', async () => {
     const card = characterCard('Sasha');
     const h = buildHarness({ card });

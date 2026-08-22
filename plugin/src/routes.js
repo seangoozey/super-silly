@@ -208,6 +208,15 @@ export function registerRoutes(router, deps) {
                 }
             });
         }
+        if (body.features) {
+            const before = { ...settings.features };
+            settings.features = { ...settings.features, ...body.features };
+            for (const k of ['memory', 'journal', 'evolve']) {
+                if (typeof body.features[k] === 'boolean' && before[k] !== body.features[k]) {
+                    audit(null, 'engine', k + ' ' + (body.features[k] ? 'enabled' : 'disabled') + ' globally');
+                }
+            }
+        }
         if (body.quiet_hours) {
             settings.quiet_hours = { ...settings.quiet_hours, ...body.quiet_hours };
             audit(null, 'engine', `quiet hours ${settings.quiet_hours.enabled ? `enabled (${settings.quiet_hours.start}–${settings.quiet_hours.end} ${settings.quiet_hours.timezone})` : 'disabled'}`);
@@ -447,11 +456,7 @@ export function registerRoutes(router, deps) {
         const body = await readBody(req);
         const entry = cards.find(String(body.name ?? ''));
         if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${body.name}".` });
-        memory.rebuild(entry.name);
-        store.purgeState(entry.name);
-        audit(entry.name, 'purged', 'runtime state purged — relationship, journal, pending replies and the memory index were wiped (chats and card kept); state recreated with card defaults');
-        broadcast('state_changed', { character: entry.name });
-        log(`purged runtime state for "${entry.name}"`);
+        engine.purgeCharacter(entry.name);
         res.json({ ok: true });
     }));
 

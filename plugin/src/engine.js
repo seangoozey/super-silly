@@ -209,7 +209,7 @@ export class Engine {
 
     /** Index one message (user or character). Never throws. */
     async #remember(entry, chatFile, role, text, sendDate) {
-        if (!this.memory || !text?.trim()) return;
+        if (!this.memory || this.settings.features?.memory === false || !text?.trim()) return;
         try {
             const vec = await this.#embedNow(text);
             if (!vec) return;
@@ -229,7 +229,7 @@ export class Engine {
     /** Retrieve relevant older texts as a prompt block (or null). */
     async #recallFor(entry, history) {
         const mem = entry.autolife.memory;
-        if (!this.memory || !mem?.enabled || (mem.retrieve_count ?? 3) <= 0) return null;
+        if (!this.memory || this.settings.features?.memory === false || !mem?.enabled || (mem.retrieve_count ?? 3) <= 0) return null;
         const lastUser = [...history].reverse().find((m) => m.is_user);
         if (!lastUser?.mes?.trim()) return null;
         const queryVec = await this.#embedNow(lastUser.mes);
@@ -421,7 +421,7 @@ export class Engine {
 
     async #backfillMemory(entry, state) {
         const mem = entry.autolife.memory;
-        if (!this.memory || !mem?.enabled || !state.chatFile) return;
+        if (!this.memory || this.settings.features?.memory === false || !mem?.enabled || !state.chatFile) return;
         const { added, remaining } = await this.memory.backfill(
             entry.name,
             this.chatStore,
@@ -540,7 +540,7 @@ export class Engine {
         }
 
         // 5. evolve reflection ("how I've changed") — opt-in per card
-        if (entry.autolife.evolve?.enabled && !life.isAsleep
+        if (entry.autolife.evolve?.enabled && this.settings.features?.evolve !== false && !life.isAsleep
             && !(state.evolve?.notes ?? []).some((n) => n.status === 'pending')
             && (!state.evolve?.lastReflectAt
                 || now.getTime() - new Date(state.evolve.lastReflectAt).getTime() > (entry.autolife.evolve.interval_hours ?? 72) * HOUR)
@@ -549,7 +549,7 @@ export class Engine {
         }
 
         // 5. journal upkeep
-        if (entry.autolife.journal?.enabled && !life.isAsleep
+        if (entry.autolife.journal?.enabled && this.settings.features?.journal !== false && !life.isAsleep
             && (!state.lastJournalAt || now.getTime() - new Date(state.lastJournalAt).getTime() > 3 * HOUR)
             && this.rng.float() < 0.08) {
             await this.#journal(entry, state, life, now);
@@ -848,6 +848,7 @@ export class Engine {
     /** Force a reflection now (panel button / command). */
     async reflectNow(character) {
         const entry = this.cards.find(character);
+        if (this.settings.features?.evolve === false) throw new Error('Evolve is globally disabled (dashboard options).');
         if (!entry?.autolife?.evolve?.enabled) throw new Error(`Evolve is not enabled for "${character}". Enable it in their Autolife panel.`);
         const state = this.#state(entry);
         this.#ensureChat(entry, state);
@@ -880,6 +881,21 @@ export class Engine {
         this.store.saveState(state);
         this.emit('evolve', { character, status: note.status });
         return note;
+    }
+
+    /**
+     * Wipe a character's runtime state: relationship, journal, pending replies
+     * and the entire memory index. Chats, bindings and the CARD are kept;
+     * state recreates from the card seed (enabled, seed relationship).
+     */
+    purgeCharacter(character) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        this.memory?.rebuild(entry.name);
+        this.store.purgeState(entry.name);
+        this.#audit(entry.name, 'purged', 'runtime state purged — relationship, journal, pending replies and the memory index wiped (chats and card kept); state recreated from card defaults');
+        this.emit('state_changed', { character: entry.name });
+        this.log(`purged runtime state for "${entry.name}"`);
     }
 
     // ------------------------------------------------------------ control surface (routes/commands)

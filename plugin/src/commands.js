@@ -79,7 +79,8 @@ export function createCommandRegistry(ctx) {
                 '/start, /stop — full stop/start (they begin stopped after server restarts)\n' +
                 '/pause, /resume — soft pause of the character\'s life\n' +
                 '/evolve — review how they\'ve changed (ok/no <n>, now)\n' +
-                '/audit [on|off] — see every engine decision as it happens\n' +
+                '/audit [on [full|normal|min]|off] — engine decisions in chat\n' +
+                '/new — wipe her state and start over (confirm)\n' +
                 '/memory — long-term memory status\n' +
                 '/model — model control (list/use/pull/think)\n' +
                 '/upload — attach a character card (.png/.json) to import it\n\n' +
@@ -308,27 +309,39 @@ export function createCommandRegistry(ctx) {
 
     register({
         name: 'audit',
-        help: 'engine decision notifications: /audit [on|off]',
+        help: 'engine decisions in chat: /audit [on [full|normal|min]|off]',
         run: async (chatId, args) => {
             const bindings = bindingsApi.load();
             const key = String(chatId);
             const binding = bindings[key];
             if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
+            const cur = binding.audit === true ? 'full' : (binding.audit || 'off');
             const sub = (args[0] ?? '').toLowerCase();
-            if (sub === 'on' || sub === 'off') {
-                binding.audit = sub === 'on';
+            const describe = (lvl) => ({
+                full: 'everything, including journal notes, memory recalls and config changes',
+                normal: 'decisions, sent messages and errors (the usual choice)',
+                min: 'only sent messages and failures',
+            })[lvl] ?? '';
+            if (sub === 'on') {
+                const lvl = (args[1] ?? 'normal').toLowerCase();
+                if (!['full', 'normal', 'min'].includes(lvl)) {
+                    return transport.send(chatId, 'Levels:\n/audit on full — everything\n/audit on normal — decisions + messages + errors\n/audit on min — messages + errors only');
+                }
+                binding.audit = lvl;
                 bindings[key] = binding;
                 bindingsApi.save(bindings);
-                return transport.send(chatId,
-                    `Audit notifications ${binding.audit ? 'ON' : 'OFF'} for ${binding.character}. `
-                    + (binding.audit
-                        ? "You'll get a message here for every engine decision: instant replies, delays (with the wait), ignored messages, catch-ups, initiative rolls and blocks, retries after failed generations."
-                        : 'Back to silence.'));
+                return transport.send(chatId, `Audit ON (${lvl}) for ${binding.character}: ${describe(lvl)}.`);
+            }
+            if (sub === 'off') {
+                binding.audit = 'off';
+                bindings[key] = binding;
+                bindingsApi.save(bindings);
+                return transport.send(chatId, `Audit OFF for ${binding.character}. Back to silence.`);
             }
             return transport.send(chatId,
-                `Audit notifications are currently ${binding.audit ? 'ON' : 'OFF'} for ${binding.character}.\n`
-                + '/audit on — every planned action/non-action gets messaged here\n'
-                + '/audit off — silence');
+                `Audit is currently ${cur === 'off' ? 'OFF' : `ON (${cur})`} for ${binding.character}.\n`
+                + '/audit on [full|normal|min] · /audit off\n'
+                + 'full: everything · normal: decisions+messages+errors · min: messages+errors');
         },
     });
 
@@ -345,6 +358,30 @@ export function createCommandRegistry(ctx) {
                 `- ${status?.memoryEntries ?? 0} texts indexed${status?.memoryEntries ? ' (older conversations are searchable)' : ''}\n` +
                 `- Embedding model: ${settings.memory?.embed_model ?? 'nomic-embed-text'}\n` +
                 '- Recalled automatically when your message relates to older chats — watch for 🔎 "recalled N older texts" audit lines.');
+        },
+    });
+
+    register({
+        name: 'new',
+        help: 'wipe her state and start over (confirmation required)',
+        run: async (chatId, args) => {
+            const binding = bindingFor(chatId);
+            if (!binding?.character) return transport.send(chatId, 'No character bound — /switch <name> first.');
+            const name = binding.character;
+            if ((args[0] ?? '').toLowerCase() !== 'confirm') {
+                return transport.send(chatId,
+                    `⚠️ This wipes ${name}'s relationship, journal, pending replies and entire memory index.\n`
+                    + 'Chats, Telegram binding and her card are kept; she restarts from the card defaults.\n\n'
+                    + 'This cannot be undone. Type /new confirm to do it.');
+            }
+            try {
+                engine.purgeCharacter(name);
+                const entry = cards.find(name);
+                const seed = entry?.autolife?.relationship?.initial ?? 20;
+                await transport.send(chatId, `${name} has been reset — starting over from scratch (relationship ${seed}/100, empty memory, no journal). She is live.`);
+            } catch (err) {
+                await transport.send(chatId, `Purge failed: ${err.message}`);
+            }
         },
     });
 

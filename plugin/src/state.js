@@ -38,6 +38,13 @@ export function defaultSettings() {
             // 1.5x at rel 0).
             relationship_speed: true,
         },
+        // Global feature kill-switches (independent of per-card settings):
+        // flip these to disable a subsystem everywhere without touching cards.
+        features: {
+            memory: true,
+            journal: true,
+            evolve: true,
+        },
         // Your sleep, not theirs: no engine-initiated texts inside this window,
         // due replies hold until it ends. Times in the given IANA timezone.
         quiet_hours: {
@@ -114,6 +121,7 @@ export class StateStore {
             persona: { ...base.persona, ...(saved.persona ?? {}) },
             prompt: { ...base.prompt, ...(saved.prompt ?? {}) },
             quiet_hours: { ...base.quiet_hours, ...(saved.quiet_hours ?? {}) },
+            features: { ...base.features, ...(saved.features ?? {}) },
             telegram: { ...base.telegram, ...(saved.telegram ?? {}) },
         };
         if (!merged.telegram.token && process.env.TELEGRAM_BOT_TOKEN) merged.telegram.token = process.env.TELEGRAM_BOT_TOKEN;
