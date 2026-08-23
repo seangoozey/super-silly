@@ -428,9 +428,44 @@ export function registerRoutes(router, deps) {
         if (state.chatFile !== file) {
             state.chatFile = file;
             store.saveState(state);
-            audit(entry.name, 'state_changed', `active chat switched to "${file}" (following the open web-UI chat)`);
+            audit(entry.name, 'state_changed', `active chat switched to "${file}"${body.source === 'web' ? ' (following the open web-UI chat)' : ' (from the Autolife panel)'}`);
             broadcast('state_changed', { character: entry.name });
         }
+        res.json({ ok: true, chatFile: file });
+    }));
+
+    // ---- per-character chat management (panel dropdown) ----
+    router.get('/chats', wrap(async (req, res) => {
+        const name = String(req.query?.name ?? '');
+        const entry = cards.find(name);
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${name}".` });
+        const state = store.loadState(entry.name, { initialRelationship: entry.autolife?.relationship?.initial ?? 20 });
+        // until the engine adopts one, the latest chat is what she'd use next
+        const effective = state.chatFile ?? chatStore.latestChat(entry.name);
+        const chats = chatStore.listChats(entry.name).map((file) => {
+            const msgs = chatStore.readMessages(entry.name, file, 100_000);
+            const last = msgs[msgs.length - 1];
+            return {
+                file,
+                messages: msgs.length,
+                lastAt: last?.send_date ?? null,
+                active: file === effective,
+            };
+        });
+        res.json({ active: effective, chats });
+    }));
+
+    router.post('/chat/new', wrap(async (req, res) => {
+        const body = await readBody(req);
+        const entry = cards.find(String(body.name ?? ''));
+        if (!entry?.autolife) return res.status(404).json({ error: `No autolife character "${body.name}".` });
+        const greeting = entry.card?.data?.first_mes ?? null;
+        const file = chatStore.createChat(entry.name, greeting);
+        const state = store.loadState(entry.name, { initialRelationship: entry.autolife?.relationship?.initial ?? 20 });
+        state.chatFile = file;
+        store.saveState(state);
+        audit(entry.name, 'state_changed', `started a fresh chat "${file}" — old chats keep their files, switch back any time`);
+        broadcast('state_changed', { character: entry.name });
         res.json({ ok: true, chatFile: file });
     }));
 

@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.9';
+const EXT_VERSION = '0.6.10';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -329,6 +329,20 @@ function panelModalHtml() {
                 </div>
 
                 <div class="autolife-section">
+                    <h4>Active chat</h4>
+                    <div class="autolife-form-grid">
+                        <label>Chat she's living in</label>
+                        <span>
+                            <select id="autolife_chat_select" style="max-width:230px"></select>
+                            <button type="button" class="menu_button autolife-btn" id="autolife_chat_switch">Switch</button>
+                            <button type="button" class="menu_button autolife-btn" id="autolife_chat_new">New</button>
+                            <span id="autolife_chat_msg" class="autolife-muted"></span>
+                        </span>
+                    </div>
+                    <div class="autolife-muted">The engine follows whichever chat you open for her in the web UI — this dropdown overrides that. Every file is its own conversation; switching preserves all of them.</div>
+                </div>
+
+                <div class="autolife-section">
                     <h4>Journal <a class="autolife-btn" id="autolife_panel_journal_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a></h4>
                     <div id="autolife_panel_journal" class="autolife-audit-feed"></div>
                 </div>
@@ -516,13 +530,24 @@ async function refreshPanel() {
             $('#autolife_sched_rows').html((a.schedule.length ? a.schedule : []).map(schedRowHtml).join(''));
         }
         loadEvolveSection();
+        loadChatOptions();
     } catch (err) {
         $('#autolife_panel_statusline').text(`error: ${err.message}`);
     }
 }
 
-/** Evolve section: reflection notes, newest first, pending ones reviewable. */
-async function loadEvolveSection() {
+/** Active-chat dropdown: her chat files with message counts, active flagged. */
+async function loadChatOptions() {
+    if (!panelChar) return;
+    try {
+        const r = await api(`/chats?name=${encodeURIComponent(panelChar)}`);
+        const opts = (r.chats ?? []).map((c) =>
+            `<option value="${c.file}" ${c.active ? 'selected' : ''}>${c.file.replace(/\.jsonl$/, '')} · ${c.messages} msgs${c.active ? ' · ACTIVE' : ''}</option>`);
+        $('#autolife_chat_select').html(opts.join('') || '<option value="">(no chats yet)</option>');
+    } catch { /* panel may be closed */ }
+}
+
+/** Evolve section: reflection notes, newest first, pending ones reviewable. */async function loadEvolveSection() {
     if (!panelChar) return;
     try {
         const r = await api(`/evolve?name=${encodeURIComponent(panelChar)}`);
@@ -1315,6 +1340,24 @@ function wireEvents() {
     });
     $('#autolife_panel_journal_refresh').on('click', refreshPanel);
 
+    $(document).on('click', '#autolife_chat_switch', async () => {
+        if (!panelChar) return;
+        try {
+            await api('/chat-file', 'POST', { name: panelChar, chatFile: $('#autolife_chat_select').val() });
+            toast('Switched — her next texts continue that conversation');
+            refreshPanel();
+        } catch (e) { toast(e.message); }
+    });
+
+    $(document).on('click', '#autolife_chat_new', async () => {
+        if (!panelChar) return;
+        try {
+            const r = await api('/chat/new', 'POST', { name: panelChar });
+            toast(`Fresh chat started: ${r.chatFile}`);
+            refreshPanel();
+        } catch (e) { toast(e.message); }
+    });
+
     // --- chips open the dedicated panel without selecting the character ---
     // CAPTURE phase: runs before ST's tile handlers, so the click never
     // selects the character and never re-renders (which used to destroy the
@@ -1690,7 +1733,7 @@ jQuery(() => {
             const name = currentCharacterName();
             const chatId = ST.chatId ?? (typeof ST.getCurrentChatId === 'function' ? ST.getCurrentChatId() : null);
             if (name && chatId && state.charStatus.has(name)) {
-                api('/chat-file', 'POST', { name, chatFile: String(chatId) }).catch(() => {});
+                api('/chat-file', 'POST', { name, chatFile: String(chatId), source: 'web' }).catch(() => {});
             }
         });
         ST.eventSource.on(ST.event_types.MESSAGE_SENT, (messageId) => onUserMessage(Number.isInteger(messageId) ? messageId : undefined));
