@@ -317,3 +317,16 @@ test('timestamps: message stamps, stamped history, and am/pm life section', asyn
     const mem = llm.buildMemoryContext([{ ts: '2026-08-23T01:03:00Z', role: 'user', text: 'hello', score: 1 }], 'Sean', 'Hannah', 'UTC');
     assert.ok(mem.includes('[Sun 8/23 1:03am] Sean: hello'));
 });
+
+test('timestamp-prefix imitation is stripped before delivery', async () => {
+    const { sanitizeTextingOutput } = await import('../plugin/src/llm.js');
+    // model imitates the context format on its reply
+    assert.equal(sanitizeTextingOutput('[Sun 8/23 10:31am] hey, you up?'), 'hey, you up?');
+    // and on each paragraph of a burst
+    assert.equal(
+        sanitizeTextingOutput('[Mon 8/24 9:05am] morning!\n\n[Mon 8/24 9:05am] did you sleep ok?'),
+        'morning!\n\ndid you sleep ok?',
+    );
+    // legitimate bracketed text at line start that isn't a timestamp survives
+    assert.equal(sanitizeTextingOutput('[sighs] long day'), '[sighs] long day');
+});

@@ -554,6 +554,11 @@ export function cleanModelOutput(text) {
  */
 export function sanitizeTextingOutput(text) {
     let out = String(text ?? '');
+    // stamp-prefix imitation: with every context message timestamped like
+    // "[Sun 8/23 1:03am]", models start replies the same way — strip those
+    // (per line, so burst paragraphs each lose their own stamp) or they'd
+    // reach Telegram and double-stamp when re-read as history
+    out = out.replace(/^[^\S\n]*\[(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s+\d{1,2}:\d{2}\s?(?:am|pm)\][^\S\n]*/gim, '');
     // bracketed meta lines, e.g. [Continue...], (OOC: ...)
     out = out.replace(/^\s*[\[(]\s*(continue|ooc|note|system|assistant)[^)\]]*[\])]\s*$/gim, '');
     // quote-style echo lines ("> what you said")
