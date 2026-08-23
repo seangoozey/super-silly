@@ -16,6 +16,7 @@ import { TelegramTransport } from './src/telegram.js';
 import { createCommandRegistry } from './src/commands.js';
 import { registerRoutes } from './src/routes.js';
 import { MemoryStore } from './src/memory.js';
+import { startOllamaShim } from './src/ollama-shim.js';
 
 const log = (m) => console.log(`[Autolife] ${m}`);
 
@@ -70,6 +71,7 @@ function seedWebUiConnection() {
 seedWebUiConnection();
 
 const store = new StateStore(path.join(USER_DIR, 'autolife'));
+let ollamaShim = null; // Ollama-API shim for ST's web UI (llamacpp backend)
 const chatStore = new ChatStore({ dataRoot: DATA_ROOT, userHandle: USER_HANDLE });
 const cards = new CardRegistry(path.join(USER_DIR, 'characters'));
 // Backend switch (env): 'ollama' (default) or 'llamacpp' — needed for Qwen3.5
@@ -81,6 +83,27 @@ const ollama = (BACKEND === 'llamacpp' || BACKEND === 'llama.cpp')
     : new OllamaClient({ baseUrl: process.env.OLLAMA_URL, log });
 if (ollama.manager) {
     log(`backend: llama.cpp — models in ${ollama.modelsDir}, llama-server on :${ollama.manager.chatPort} (chat) / :${ollama.manager.embedPort} (embed)`);
+    // SillyTavern's web UI talks Ollama on :11434 — put a translating shim
+    // there so its existing connection keeps working (model list, streaming
+    // chat) and web requests can wake the lazy llama-server too.
+    startOllamaShim({ client: ollama, log }).then((shim) => { ollamaShim = shim; });
+    // Warm the current model in the background (download if needed, load into
+    // VRAM, run the template probe): the web UI connects green ~immediately
+    // and the first texts of the day don't pay the load time.
+    const warmUp = async () => {
+        try {
+            const model = store.loadSettings().model?.current;
+            if (!model) return;
+            log(`warming up ${model} — downloading if needed, then loading into VRAM`);
+            const ok = await ollama.ensureModel(model).catch(() => false);
+            if (!ok) return log(`warm-up: "${model}" could not be downloaded — pull it via the panel or /model pull`);
+            await ollama.chat({ model, messages: [{ role: 'user', content: 'ready?' }], numPredict: 1 });
+            log(`warm-up complete — ${model} resident`);
+        } catch (err) {
+            log(`warm-up skipped: ${err.message}`);
+        }
+    };
+    warmUp();
 }
 const memory = new MemoryStore(path.join(USER_DIR, 'autolife', 'memory'), (m) => log(`memory: ${m}`));
 
@@ -197,6 +220,7 @@ async function init(router) {
 async function exit() {
     engine.stop();
     stopTransport();
+    ollamaShim?.close();
     ollama.manager?.stop();
     for (const res of sseClients) {
         try {

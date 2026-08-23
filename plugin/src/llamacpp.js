@@ -509,24 +509,14 @@ export class LlamaCppClient {
         }
     }
 
-    /**
-     * One-shot chat completion. Same request fields as the Ollama client;
-     * numCtx is server-level (set at spawn), think is handled by the model's
-     * chat template + our mechanical <think> stripping.
-     */
-    async chat(req) {
-        const file = modelFile(this.modelsDir, req.model);
-        if (!file) throw new Error(`backend "llamacpp" needs hf.co/Owner/Repo:Tag model names (got "${req.model}")`);
-        if (!fs.existsSync(file)) throw new Error(`model "${req.model}" is not downloaded — /model pull ${req.model} first`);
-        await this.manager.ensureChatServer(req.model, file);
-
+    /** Shared /chat/completions body builder (stream set by the callers). */
+    #chatBody(req) {
         // per-request preset overrides (ST textgen presets) merge over the
         // engine defaults; an explicit per-call temperature still wins
         const s = { ...(this.samplers ?? {}), ...(req.samplers ?? {}) };
-        const body = {
+        return {
             model: req.model,
             messages: ensureAlternating(foldTrailingSystem(req.messages)),
-            stream: false,
             max_tokens: req.numPredict ?? 160,
             temperature: req.temperature ?? s.temperature ?? 0.7,
             ...(Number(s.min_p) > 0 && Number(s.min_p) <= 1 ? { min_p: Number(s.min_p) } : {}),
@@ -548,15 +538,66 @@ export class LlamaCppClient {
                 ? { chat_template_kwargs: { enable_thinking: req.think === 'on' } }
                 : {}),
         };
+    }
+
+    async #ensureForChat(model) {
+        const file = modelFile(this.modelsDir, model);
+        if (!file) throw new Error(`backend "llamacpp" needs hf.co/Owner/Repo:Tag model names (got "${model}")`);
+        if (!fs.existsSync(file)) throw new Error(`model "${model}" is not downloaded — /model pull ${model} first`);
+        await this.manager.ensureChatServer(model, file);
+    }
+
+    /**
+     * One-shot chat completion. Same request fields as the Ollama client;
+     * numCtx is server-level (set at spawn), think is handled by the model's
+     * chat template + our mechanical <think> stripping.
+     */
+    async chat(req) {
+        await this.#ensureForChat(req.model);
         const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ ...this.#chatBody(req), stream: false }),
             signal: this.#signal(this.timeoutMs),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(`llama-server /chat/completions -> HTTP ${res.status}: ${json.error?.message ?? ''}`);
         return String(json?.choices?.[0]?.message?.content ?? '').trim();
+    }
+
+    /**
+     * Streaming variant for the Ollama shim: yields content deltas parsed
+     * from llama-server's OpenAI SSE stream.
+     * @yields {string}
+     */
+    async *chatStream(req) {
+        await this.#ensureForChat(req.model);
+        const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...this.#chatBody(req), stream: true }),
+            signal: this.#signal(this.timeoutMs),
+        });
+        if (!res.ok) {
+            const json = await res.json().catch(() => ({}));
+            throw new Error(`llama-server /chat/completions -> HTTP ${res.status}: ${json.error?.message ?? ''}`);
+        }
+        let buf = '';
+        for await (const chunk of res.body) {
+            buf += new TextDecoder().decode(chunk);
+            const lines = buf.split('\n');
+            buf = lines.pop();
+            for (const raw of lines) {
+                const line = raw.trim();
+                if (!line.startsWith('data:')) continue;
+                const payload = line.slice(5).trim();
+                if (payload === '[DONE]') return;
+                try {
+                    const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content ?? '';
+                    if (delta) yield delta;
+                } catch { /* partial line — next chunk completes it */ }
+            }
+        }
     }
 
     /** Embed a text with the embed instance (nomic-embed GGUF by default). */
