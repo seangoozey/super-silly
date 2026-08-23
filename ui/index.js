@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.8';
+const EXT_VERSION = '0.6.9';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -518,6 +518,30 @@ async function refreshPanel() {
         loadEvolveSection();
     } catch (err) {
         $('#autolife_panel_statusline').text(`error: ${err.message}`);
+    }
+}
+
+/** Evolve section: reflection notes, newest first, pending ones reviewable. */
+async function loadEvolveSection() {
+    if (!panelChar) return;
+    try {
+        const r = await api(`/evolve?name=${encodeURIComponent(panelChar)}`);
+        const notes = [...(r.notes ?? [])].reverse();
+        const row = (n) => {
+            const when = `<span class="autolife-muted">${new Date(n.ts).toLocaleString()}</span>`;
+            if (n.status === 'pending') {
+                return `<div class="autolife-audit-row">${when} — <b>${n.text}</b> ` +
+                    `<a class="autolife-btn" data-evolve-ok="${n.ts}" title="let it shape her prompts"><i class="fa-solid fa-check"></i> keep</a> ` +
+                    `<a class="autolife-btn" data-evolve-no="${n.ts}" title="throw it away"><i class="fa-solid fa-xmark"></i> discard</a></div>`;
+            }
+            const label = n.status === 'approved' ? '✓ kept' : `(${n.status})`;
+            return `<div class="autolife-audit-row">${when} — <span class="autolife-muted">${label}</span> ${n.text}</div>`;
+        };
+        $('#autolife_evolve_list').html(notes.length
+            ? notes.map(row).join('')
+            : `<div class="autolife-muted">No reflections yet${r.enabled ? '' : ' — enable evolve in the settings above first'}.</div>`);
+    } catch (e) {
+        $('#autolife_evolve_list').html(`<div class="autolife-muted">${e.message}</div>`);
     }
 }
 
@@ -1206,6 +1230,9 @@ function connectEvents() {
             case 'model_changed':
                 loadModelSection();
                 refreshStatus();
+                break;
+            case 'evolve':
+                if (panelChar && data.character === panelChar) loadEvolveSection();
                 break;
             default:
                 break;
