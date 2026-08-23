@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
 import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
@@ -281,7 +281,7 @@ export class Engine {
         }).filter((h) => h.score > 0.15);
         if (!hits.length) return null;
         this.#audit(entry.name, 'memory', `recalled ${hits.length} older text${hits.length > 1 ? 's' : ''} for context (top match ${new Date(hits[0].ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, similarity ${(hits[0].score * 100).toFixed(0)}%)`);
-        return buildMemoryContext(hits, this.chatStore.userName, entry.name);
+        return buildMemoryContext(hits, this.chatStore.userName, entry.name, entry.autolife.timezone);
     }
 
     // ------------------------------------------------------------ inbound
@@ -661,6 +661,7 @@ export class Engine {
             userName: this.chatStore.userName,
             kind,
             memory: memoryBlock,
+            timeZone: entry.autolife.timezone,
             extra: [extra?.system, toneNote].filter(Boolean).join('\n') || undefined,
         });
 
@@ -876,7 +877,10 @@ export class Engine {
             const userLines = tail
                 .filter((m) => m.is_user)
                 .slice(-6)
-                .map((m) => `- ${String(m.mes ?? '').slice(0, 200)}`);
+                .map((m) => {
+                    const stamp = messageStamp(m.send_date, entry.autolife.timezone);
+                    return `- ${stamp ? `[${stamp}] ` : ''}${String(m.mes ?? '').slice(0, 200)}`;
+                });
             const userBlock = userLines.length
                 ? `Things ${this.chatStore.userName} actually said to you recently (your ONLY record of the conversation — never invent others):\n${userLines.join('\n')}`
                 : `(No messages from ${this.chatStore.userName} lately — reflect on your own day or inner life, not on any conversation.)`;
@@ -955,6 +959,8 @@ export class Engine {
                 this.chatStore.readMessages(entry.name, state.chatFile, 10),
                 entry.name,
                 this.chatStore.userName,
+                10,
+                entry.autolife.timezone,
             );
             const raw = await this.ollama.chat({
                 model,
@@ -1082,7 +1088,7 @@ export class Engine {
                 activity: life.activity,
                 availability: life.availability,
                 mood: life.mood,
-                localTime: `${life.local.weekdayName} ${life.local.hhmm} (${entry.autolife.timezone})`,
+                localTime: `${life.local.weekdayName} ${life.local.hhmm12 ?? life.local.hhmm} (${entry.autolife.timezone})`,
                 paused: !!state.paused,
                 enabled: !!state.enabled,
                 journal: state.journal ?? [],

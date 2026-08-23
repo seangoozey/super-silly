@@ -21,11 +21,15 @@ export function localParts(date, timeZone) {
     const hour = Number(parts.hour) % 24; // hour can be "24" with hour12:false in some locales
     const minute = Number(parts.minute);
     const weekday = weekdayMap[parts.weekday];
+    const h12 = ((hour + 11) % 12) + 1;
     return {
         weekday,
         weekdayName: weekdayNames[weekday],
         minutes: hour * 60 + minute,
         hhmm: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+        // unambiguous for the model: "10:30pm" can't be misread as morning
+        hhmm12: `${h12}:${String(minute).padStart(2, '0')}${hour < 12 ? 'am' : 'pm'}`,
+        dateShort: `${Number(parts.month)}/${Number(parts.day)}/${String(parts.year).slice(2)}`,
         dateKey: `${parts.year}-${parts.month}-${parts.day}`,
     };
 }

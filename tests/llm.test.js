@@ -272,3 +272,48 @@ test('OllamaClient chat applies sampler defaults and per-request overrides', asy
     await client.chat({ model: 'm', messages: [], temperature: 0.6 });
     assert.equal(bodies[2].options.temperature, 0.6);
 });
+
+test('timestamps: message stamps, stamped history, and am/pm life section', async () => {
+    const llm = await import('../plugin/src/llm.js');
+    const { localParts } = await import('../plugin/src/schedule.js');
+
+    // am/pm + short date from localParts
+    const p = localParts(new Date('2026-08-23T17:30:00Z'), 'UTC');
+    assert.equal(p.hhmm12, '5:30pm');
+    assert.equal(p.dateShort, '8/23/26');
+    const morning = localParts(new Date('2026-08-23T10:30:00Z'), 'UTC');
+    assert.equal(morning.hhmm12, '10:30am', '10:30am cannot be misread as evening');
+
+    // per-message stamps in the character's timezone
+    assert.equal(llm.messageStamp('2026-08-23T17:30:00Z', 'UTC'), 'Sun 8/23 5:30pm');
+    assert.equal(llm.messageStamp('2026-08-23T01:03:00Z', 'UTC'), 'Sun 8/23 1:03am');
+    assert.equal(llm.messageStamp('garbage', 'UTC'), '');
+    assert.equal(llm.messageStamp(undefined, 'UTC'), '');
+
+    // history messages carry their stamp prefix
+    const hist = llm.historyToOllama(
+        [{ is_user: true, mes: 'hey', send_date: '2026-08-23T01:03:00Z' }, { is_user: false, mes: 'hi', send_date: '2026-08-23T17:30:00Z' }],
+        'Hannah', 'Sean', 24, 'UTC',
+    );
+    assert.equal(hist[0].content, '[Sun 8/23 1:03am] hey');
+    assert.equal(hist[1].content, '[Sun 8/23 5:30pm] hi');
+    // no timeZone -> untouched (backwards compatible)
+    const plain = llm.historyToOllama([{ is_user: true, mes: 'hey', send_date: '2026-08-23T01:03:00Z' }], 'H', 'S');
+    assert.equal(plain[0].content, 'hey');
+
+    // life section reads unambiguously, style section explains the stamps
+    const sections = llm.promptSections({
+        card: { data: { name: 'Hannah' } },
+        autolife: { timezone: 'UTC', behavior: { avg_message_length: 'short' } },
+        life: { activity: 'reading', availability: 0.5, local: localParts(new Date('2026-08-23T10:30:00Z'), 'UTC') },
+        relationshipScore: 40,
+        userName: 'Sean',
+    });
+    assert.ok(sections.life.includes('it is 10:30am on Sunday, 8/23/26'));
+    assert.ok(/timestamps like \[Sun 8\/23 1:03am\]/.test(sections.style));
+    assert.ok(/NEXT day, not now/.test(sections.style));
+
+    // memory hits carry full stamps too
+    const mem = llm.buildMemoryContext([{ ts: '2026-08-23T01:03:00Z', role: 'user', text: 'hello', score: 1 }], 'Sean', 'Hannah', 'UTC');
+    assert.ok(mem.includes('[Sun 8/23 1:03am] Sean: hello'));
+});

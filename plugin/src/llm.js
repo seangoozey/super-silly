@@ -336,7 +336,7 @@ export function promptSections(ctx) {
     }
 
     const local = ctx.life.local;
-    sections.life = `Your life right now: it is ${local.weekdayName ?? ''} ${local.hhmm} (${a.timezone}). You are currently ${ctx.life.activity}.`
+    sections.life = `Your life right now: it is ${local.hhmm12 ?? local.hhmm} on ${local.weekdayName ?? ''}${local.dateShort ? `, ${local.dateShort}` : ''} (${a.timezone}). You are currently ${ctx.life.activity}.`
         + (ctx.life.mood ? ` You feel ${ctx.life.mood}.` : '');
     sections.relationship = `Your relationship with ${ctx.userName} is ${relationshipDescriptor(ctx.relationshipScore)} (${Math.round(ctx.relationshipScore)}/100).`;
 
@@ -348,6 +348,7 @@ export function promptSections(ctx) {
     }
 
     sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions, no quotation marks around the message. Never quote, repeat, or echo ${ctx.userName}'s words back to them — always write your own new words.`
+        + ' Messages in the conversation are prefixed with local timestamps like [Sun 8/23 1:03am] — the last timestamp is the present moment; reason from them about how much time has passed (something agreed for "tomorrow" means the NEXT day, not now).'
         + ' If you want to send another text right away, end your message with {follow-up} — otherwise never write that marker.';
     sections.postHistory = data.post_history_instructions?.trim() ? `Additional standing instructions: ${sub(data.post_history_instructions)}` : null;
 
@@ -355,13 +356,42 @@ export function promptSections(ctx) {
 }
 
 /**
- * Map ST chat messages to /api/chat messages.
- * @param {Array<{name:string, is_user:boolean, mes:string}>} history
+ * Compact per-message local timestamp: "Sun 8/23 1:03am" — gives the model a
+ * temporal anchor per turn (without it, "let's do X tomorrow" reads as if
+ * tomorrow already arrived). Empty string when the date can't be parsed.
  */
-export function historyToOllama(history, characterName, userName, limit = 24) {
+const stampFmts = new Map();
+export function messageStamp(sendDate, timeZone) {
+    if (!sendDate) return '';
+    const d = new Date(sendDate);
+    if (Number.isNaN(d.getTime())) return '';
+    const tz = timeZone || 'UTC';
+    let fmt = stampFmts.get(tz);
+    if (!fmt) {
+        fmt = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz, weekday: 'short', month: 'numeric', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', hour12: true,
+        });
+        stampFmts.set(tz, fmt);
+    }
+    const p = Object.fromEntries(fmt.formatToParts(d).map((x) => [x.type, x.value]));
+    return `${p.weekday} ${Number(p.month)}/${Number(p.day)} ${p.hour}:${p.minute}${(p.dayPeriod ?? '').toLowerCase()}`;
+}
+
+/**
+ * Map ST chat messages to /api/chat messages. With `timeZone`, every message
+ * is prefixed with its local timestamp so the model can reason about elapsed
+ * time between turns.
+ * @param {Array<{name:string, is_user:boolean, mes:string, send_date?:string}>} history
+ */
+export function historyToOllama(history, characterName, userName, limit = 24, timeZone = null) {
     return history
         .slice(-limit)
-        .map((m) => ({ role: m.is_user ? 'user' : 'assistant', content: String(m.mes ?? '') }))
+        .map((m) => {
+            const text = String(m.mes ?? '');
+            const stamp = timeZone ? messageStamp(m.send_date, timeZone) : '';
+            return { role: m.is_user ? 'user' : 'assistant', content: stamp ? `[${stamp}] ${text}` : text };
+        })
         .filter((m) => m.content.trim().length > 0);
 }
 
@@ -399,11 +429,11 @@ export function buildEvolvePrompt(ctx) {
  * Format retrieved memory hits as a compact system block for the prompt.
  * @param {Array<{ts: string, role: string, text: string, score: number}>} hits
  */
-export function buildMemoryContext(hits, userName, characterName) {
-    const fmt = (ts) => {
+export function buildMemoryContext(hits, userName, characterName, timeZone = null) {
+    const fmt = (ts) => (timeZone ? messageStamp(ts, timeZone) : (() => {
         const d = new Date(ts);
         return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    };
+    })());
     const lines = hits.map((h) => `[${fmt(h.ts)}] ${h.role === 'user' ? userName : characterName}: ${String(h.text).slice(0, 300)}`);
     return `Texts from earlier in your history with ${userName} (your own memories of past exchanges — respond to them if relevant; NEVER quote, repeat, or recite them back):\n${lines.join('\n')}`;
 }
@@ -416,7 +446,7 @@ export function buildMemoryContext(hits, userName, characterName) {
  */
 export function buildChatMessages(req) {
     const messages = [{ role: 'system', content: req.system }];
-    messages.push(...historyToOllama(req.history, req.characterName, req.userName));
+    messages.push(...historyToOllama(req.history, req.characterName, req.userName, 24, req.timeZone ?? null));
     if (req.memory) messages.push({ role: 'system', content: req.memory });
     const directive = DIRECTIVES[req.kind];
     if (directive) messages.push({ role: 'system', content: directive(req.userName) });
