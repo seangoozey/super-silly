@@ -439,7 +439,7 @@ export function buildJournalPrompt(ctx) {
     return [
         `Write 1-2 sentences of ${data.name}'s PRIVATE DIARY THOUGHTS — internal reflection, never anything you would say out loud.`,
         `Style rules: every sentence is complete (subject and verb, ending punctuation); write ABOUT your feelings, plans, worries, opinions, or observations — never transcribe, quote, reply to, or summarize any text message; do not retell events you already texted ${ctx.userName} about — note what they meant to you or what you keep thinking about them.`,
-        `Ground everything ONLY in your current activity and the ACTUAL messages shown in this conversation. NEVER invent conversations, events, or things ${ctx.userName} said that are not shown — if nothing notable happened with ${ctx.userName}, reflect on your own day or inner life instead. Plain text only, first person, no headings.`,
+        `Ground everything ONLY in who you are, your current activity, and the messages listed below — NEVER invent conversations, events, or things ${ctx.userName} said that are not listed. If nothing notable happened with ${ctx.userName}, reflect on your own day or inner life instead. Plain text only, first person, no headings.`,
     ].join(' ');
 }
 

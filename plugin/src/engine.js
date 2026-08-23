@@ -868,14 +868,20 @@ export class Engine {
         try {
             const model = this.effectiveModel();
             if (!(await this.ollama.hasModel(model))) return;
-            const history = historyToOllama(
-                this.chatStore.readMessages(entry.name, state.chatFile, 10),
-                entry.name,
-                this.chatStore.userName,
-            );
+            // Grounding without the recursion loop: show ONLY what the user
+            // actually said recently — never her own recent texts (her own
+            // output fed back through the journal is what pinned her into
+            // re-texting the same topic for hours).
+            const tail = this.chatStore.readMessages(entry.name, state.chatFile, 40);
+            const userLines = tail
+                .filter((m) => m.is_user)
+                .slice(-6)
+                .map((m) => `- ${String(m.mes ?? '').slice(0, 200)}`);
+            const userBlock = userLines.length
+                ? `Things ${this.chatStore.userName} actually said to you recently (your ONLY record of the conversation — never invent others):\n${userLines.join('\n')}`
+                : `(No messages from ${this.chatStore.userName} lately — reflect on your own day or inner life, not on any conversation.)`;
             const messages = [
-                { role: 'system', content: `${identity}\n\n${directive}` },
-                ...history,
+                { role: 'system', content: `${identity}\n\n${directive}\n\n${userBlock}` },
                 { role: 'user', content: '(write your private note for right now)' },
             ];
             const raw = await this.ollama.chat({ model, messages, numPredict: 220, logMeta: { character: entry.name, kind: 'journal' } });

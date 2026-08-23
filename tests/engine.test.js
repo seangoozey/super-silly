@@ -534,3 +534,42 @@ test('journal generation carries her identity (personality, scenario, relationsh
     assert.ok(!/How you text:/.test(system), 'texting style rules stay out of diary mode');
     assert.ok(/PRIVATE DIARY THOUGHTS/.test(system), 'directive rides along');
 });
+
+test('journal grounding sees only the user side — her own texts never feed back', async () => {
+    const card = characterCard('Loopless', {
+        journal: { enabled: true },
+        schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], start: '09:00', end: '23:00', activity: 'hanging out at home', availability: 0.7 }],
+    });
+    // she texts a litany of repeats, then the user replies once
+    const h = buildHarness({
+        card,
+        rngValues: [0.99, 0.0, 0.99, 0.0],
+        reply: ['the mailman came early', 'totally different fresh words in reply'],
+    });
+    await h.engine.onInbound({ character: 'Loopless', mes: 'the mailman came early i was waiting by the window', source: 'telegram' });
+    const state = stateOf(h.store, 'Loopless');
+    for (const t of ['the mailman came early', 'it came', 'just got my package']) {
+        h.chatStore.appendMessage('Loopless', state.chatFile, { name: 'Loopless', is_user: false, mes: t, send_date: '2026-01-15T15:00:00Z' });
+    }
+
+    await h.engine.journalNow('Loopless');
+    const req = h.chatReqs.at(-1);
+    // no assistant messages at all in journal generation
+    assert.ok(!req.messages.some((m) => m.role === 'assistant'), 'her own texts are excluded');
+    const system = req.messages[0].content;
+    assert.ok(/actually said to you recently/.test(system), 'user-side grounding list present');
+    assert.ok(system.includes('the mailman came early i was waiting by the window'), 'the user message is listed');
+    assert.ok(!/it came\n|just got my package/.test(req.messages.map((m) => m.content).join('\n')), 'her litany is not shown');
+});
+
+test('journal with no recent user messages says so instead of showing nothing', async () => {
+    const card = characterCard('Quiet', {
+        journal: { enabled: true },
+        schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], start: '09:00', end: '23:00', activity: 'reading', availability: 0.7 }],
+    });
+    const h = buildHarness({ card, rngValues: [], reply: 'i wonder what Sean is doing today. it is strange to miss someone this much.' });
+    await h.engine.journalNow('Quiet');
+    const system = h.chatReqs.at(-1).messages[0].content;
+    assert.ok(/No messages from .* lately/.test(system), 'explicit no-messages fallback');
+    assert.ok(!h.chatReqs.at(-1).messages.some((m) => m.role === 'assistant'));
+});
