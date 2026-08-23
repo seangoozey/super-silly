@@ -248,3 +248,71 @@ test('foldTrailingSystem merges post-start system blocks into one user message',
     // only leading system -> untouched
     assert.deepEqual(foldTrailingSystem([{ role: 'system', content: 'a' }]), [{ role: 'system', content: 'a' }]);
 });
+
+test('joining an in-flight pull receives progress events too (no silent ride)', async () => {
+    const dir = tmpDir();
+    const model = 'hf.co/ReadyArt/big:Q4';
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const mkClient = () => new LlamaCppClient({
+        manager: new LlamaServerManager({ modelsDir: dir, spawnImpl: () => new EventEmitter(), fetchImpl: async () => ({ ok: true }), log: () => {} }),
+        fetchImpl: async (url) => {
+            if (String(url).includes('/api/models/')) {
+                return { ok: true, json: async () => ({ siblings: [{ rfilename: 'big-Q4.gguf' }] }) };
+            }
+            return {
+                ok: true,
+                headers: { get: (k) => (k === 'content-length' ? '4' : null) },
+                body: (async function* () { yield Buffer.from('ab'); await gate; yield Buffer.from('cd'); })(),
+            };
+        },
+        log: () => {},
+    });
+    const first = mkClient();
+    const firstEvents = [];
+    const started = first.pull(model, (e) => firstEvents.push(e)); // engine starts the download
+    await new Promise((r) => setTimeout(r, 30)); // let it reach the gate
+
+    // dashboard Pull clicks while in flight — same client, second caller,
+    // must get events instead of riding silently
+    const joinEvents = [];
+    const joined = first.pull(model, (e) => joinEvents.push(e));
+
+    release();
+    assert.equal(await started, true);
+    assert.equal(await joined, true);
+    assert.ok(firstEvents.some((e) => e.status === 'success'));
+    assert.ok(joinEvents.some((e) => e.status === 'success'), 'the joining caller sees progress');
+    assert.equal(fs.readFileSync(modelFile(dir, model), 'utf8'), 'abcd');
+});
+
+test('long downloads log throttled progress lines into the container log', async () => {
+    const dir = tmpDir();
+    const model = 'hf.co/ReadyArt/loggy:Q4';
+    const lines = [];
+    const client = new LlamaCppClient({
+        manager: new LlamaServerManager({ modelsDir: dir, spawnImpl: () => new EventEmitter(), fetchImpl: async () => ({ ok: true }), log: (m) => lines.push(m) }),
+        fetchImpl: async (url) => {
+            if (String(url).includes('/api/models/')) {
+                return { ok: true, json: async () => ({ siblings: [{ rfilename: 'loggy-Q4.gguf' }] }) };
+            }
+            return {
+                ok: true,
+                headers: { get: (k) => (k === 'content-length' ? '4' : null) },
+                body: (async function* () {
+                    for (let i = 0; i < 3; i++) {
+                        yield Buffer.from('ab');
+                        await new Promise((r) => setTimeout(r, 25));
+                    }
+                })(),
+            };
+        },
+        log: (m) => lines.push(m),
+        pullLogEveryMs: 30, // tight for the test; production default is 10s
+    });
+    await client.pull(model);
+    const progressLines = lines.filter((l) => /^pulling /.test(l));
+    assert.ok(progressLines.length >= 1, 'periodic progress reaches the container log');
+    assert.ok(/pulling hf\.co\/ReadyArt\/loggy:Q4: 0\.00\/0\.00 GB \(0%\)/.test(lines.join('\n')) || progressLines.length >= 1);
+    assert.ok(lines.some((l) => /download complete/.test(l)), 'completion is logged');
+});

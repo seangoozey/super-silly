@@ -306,7 +306,10 @@ export class LlamaCppClient {
         this.fetchImpl = opts.fetchImpl ?? fetch;
         this.timeoutMs = opts.timeoutMs ?? 300_000;
         this.samplers = opts.samplers ?? null; // engine keeps this in sync
-        this.pullInFlight = new Map(); // model name -> download promise
+        this.pullInFlight = new Map(); // model name -> { promise, listeners }
+        // a 16GB GGUF otherwise logs one line and goes quiet for minutes —
+        // progress also lands in the container log every N ms
+        this.pullLogEveryMs = opts.pullLogEveryMs ?? 10_000;
     }
 
     get bin() { return this.manager.bin; }
@@ -348,7 +351,12 @@ export class LlamaCppClient {
         return Boolean(file && fs.existsSync(file));
     }
 
-    /** Download a model GGUF from HuggingFace with progress. Resolves true. */
+    /**
+     * Download a model GGUF from HuggingFace with progress. Resolves true.
+     * Concurrent callers (engine generation, dashboard Pull, /model pull)
+     * share ONE download and every one of them receives the progress events —
+     * joining an in-flight pull must not mean silence, or the UI widget parks.
+     */
     async pull(name, onProgress) {
         const p = parseModelName(name);
         if (!p) throw new Error(`backend "llamacpp" needs hf.co/Owner/Repo:Tag model names (got "${name}")`);
@@ -357,25 +365,48 @@ export class LlamaCppClient {
             onProgress?.({ status: 'success', percent: 100 });
             return true;
         }
-        // concurrent callers (e.g. memory recall + backfill both embedding at
-        // once) share one download — two writers on the same .part file would
-        // corrupt it
-        if (this.pullInFlight.has(name)) return this.pullInFlight.get(name);
+        const existing = this.pullInFlight.get(name);
+        if (existing) {
+            if (onProgress) existing.listeners.add(onProgress);
+            return existing.promise;
+        }
+        const listeners = new Set();
+        const fanout = (evt) => {
+            for (const fn of listeners) {
+                try { fn(evt); } catch { /* a dead listener must not kill the pull */ }
+            }
+        };
+        if (onProgress) listeners.add(onProgress);
+        // throttled container-log progress — the only other place a long
+        // download is visible to someone ssh'd into the server
+        let lastLog = 0;
+        const gb = (n) => `${(n / 1e9).toFixed(2)} GB`;
+        listeners.add((evt) => {
+            const now = Date.now();
+            const done = evt.status === 'success';
+            if (!done && (!evt.completed || now - lastLog < this.pullLogEveryMs)) return;
+            lastLog = now;
+            if (done) this.log(`${name} download complete (${gb(evt.completed ?? 0)})`);
+            else if (evt.status === 'failed') this.log(`${name} download FAILED: ${evt.error ?? ''}`);
+            else this.log(`pulling ${name}: ${gb(evt.completed)}/${gb(evt.total)} (${(evt.percent ?? 0).toFixed(0)}%)${evt.speedBps ? ` at ${(evt.speedBps / 1e6).toFixed(0)} MB/s` : ''}`);
+        });
         const job = (async () => {
             fs.mkdirSync(this.modelsDir, { recursive: true });
             const file = await resolveHfFile(p.repo, p.tag, this.fetchImpl);
             const url = `${HF_API}/${p.repo}/resolve/main/${file}`;
             this.log(`downloading ${name} -> ${file}`);
-            onProgress?.({ status: `resolving ${file}`, total: 0, completed: 0, percent: 0, speedBps: 0 });
-            await downloadToFile(url, dest, onProgress, this.fetchImpl);
+            fanout({ status: `resolving ${file}`, total: 0, completed: 0, percent: 0, speedBps: 0 });
+            await downloadToFile(url, dest, fanout, this.fetchImpl);
             fs.writeFileSync(`${dest}.name`, String(name)); // sidecar: original model name for tags()
             if (this.manager.loaded === name) await this.manager.ensureChatServer(name, dest); // refreshed file
             return true;
         })();
-        this.pullInFlight.set(name, job);
+        this.pullInFlight.set(name, { promise: job, listeners });
         try {
             return await job;
         } catch (err) {
+            fanout({ status: 'failed', error: String(err?.message ?? err) });
+            this.log(`${name} download FAILED: ${err?.message ?? err}`);
             fs.rmSync(`${dest}.part`, { force: true });
             throw err;
         } finally {
