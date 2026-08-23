@@ -151,7 +151,9 @@ test('LlamaCppClient chat maps the request to OpenAI dialect and parses choices'
 
     const out = await client.chat({ model, messages: [{ role: 'user', content: 'hi' }], numPredict: 220 });
     assert.equal(out, 'hey there');
-    const req = bodies.find((b) => b.url.includes('/chat/completions'));
+    // (a 1-token template probe also posts to /chat/completions at startup —
+    // pick the real request by its max_tokens)
+    const req = bodies.filter((b) => b.url.includes('/chat/completions')).find((b) => b.body.max_tokens === 220);
     assert.equal(req.body.max_tokens, 220);
     assert.equal(req.body.temperature, 0.7);
     assert.equal(req.body.top_p, 1);
@@ -315,4 +317,113 @@ test('long downloads log throttled progress lines into the container log', async
     assert.ok(progressLines.length >= 1, 'periodic progress reaches the container log');
     assert.ok(/pulling hf\.co\/ReadyArt\/loggy:Q4: 0\.00\/0\.00 GB \(0%\)/.test(lines.join('\n')) || progressLines.length >= 1);
     assert.ok(lines.some((l) => /download complete/.test(l)), 'completion is logged');
+});
+
+test('template-failure probe drops --jinja, respawns legacy, and caches per model', async () => {
+    const dir = tmpDir();
+    const spawns = [];
+    const mkChild = () => {
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.killCalls = 0;
+        child.kill = () => { child.killCalls += 1; };
+        return child;
+    };
+    let chatCalls = 0;
+    const mgr = new LlamaServerManager({
+        modelsDir: dir,
+        numCtx: 1024,
+        spawnImpl: (bin, args) => { const c = mkChild(); c.args = args; spawns.push(c); return c; },
+        fetchImpl: async (url) => {
+            const u = String(url);
+            if (u.endsWith('/health')) return { ok: true };
+            if (u.includes('/chat/completions')) {
+                chatCalls += 1;
+                if (chatCalls === 1) {
+                    return { ok: false, status: 400, text: async () => 'Unable to generate parser for this template. Automatic parser generation failed: While executing CallExpression…' };
+                }
+                return { ok: true, json: async () => ({ choices: [{ message: { content: 'x' } }] }) };
+            }
+            return { ok: true };
+        },
+        log: () => {},
+    });
+
+    await mgr.ensureChatServer('hf.co/a/b:Q4', path.join(dir, 'b.gguf'));
+    assert.equal(spawns.length, 2, 'jinja attempt + legacy respawn');
+    assert.ok(spawns[0].args.includes('--jinja'));
+    assert.ok(!spawns[1].args.includes('--jinja'), 'fallback drops --jinja');
+    assert.equal(spawns[0].killCalls, 1, 'failed-template instance is killed');
+
+    // cached: after a crash, the model respawns straight to legacy mode
+    spawns[1].emit('exit', 1);
+    await mgr.ensureChatServer('hf.co/a/b:Q4', path.join(dir, 'b.gguf'));
+    assert.equal(spawns.length, 3);
+    assert.ok(!spawns[2].args.includes('--jinja'));
+    mgr.stop();
+});
+
+test('non-template probe failures do not trigger the jinja fallback', async () => {
+    const dir = tmpDir();
+    const spawns = [];
+    const mkChild = () => {
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => {};
+        spawns.push(child);
+        return child;
+    };
+    let probed = 0;
+    const mgr = new LlamaServerManager({
+        modelsDir: dir,
+        spawnImpl: (bin, args) => mkChild(),
+        fetchImpl: async (url) => {
+            const u = String(url);
+            if (u.endsWith('/health')) return { ok: true };
+            if (u.includes('/chat/completions')) {
+                probed += 1;
+                return { ok: false, status: 500, text: async () => 'server error' };
+            }
+            return { ok: true };
+        },
+        log: () => {},
+    });
+    await mgr.ensureChatServer('hf.co/a/c:Q4', path.join(dir, 'c.gguf'));
+    assert.equal(spawns.length, 1, 'a 500 is not template-shaped — server stays up');
+    assert.equal(probed, 1);
+    mgr.stop();
+});
+
+test('ensureAlternating satisfies strict ChatML templates', async () => {
+    const { ensureAlternating } = await import('../plugin/src/llamacpp.js');
+    // greeting-only character + folded directive -> user prepended, valid order
+    const out = ensureAlternating([
+        { role: 'system', content: 'persona' },
+        { role: 'assistant', content: 'hey, June here' },
+        { role: 'user', content: '(instructions)' },
+    ]);
+    assert.deepEqual(out.map((m) => m.role), ['system', 'user', 'assistant', 'user']);
+    assert.equal(out[1].content, '…');
+
+    // history ends with the user's text + folded directives -> merged into one user turn
+    const out2 = ensureAlternating([
+        { role: 'system', content: 'persona' },
+        { role: 'user', content: 'hey you' },
+        { role: 'assistant', content: 'hii' },
+        { role: 'user', content: 'still there?' },
+        { role: 'user', content: '(instructions)' },
+    ]);
+    assert.deepEqual(out2.map((m) => m.role), ['system', 'user', 'assistant', 'user']);
+    assert.ok(out2[3].content.includes('still there?') && out2[3].content.includes('(instructions)'));
+
+    // already-valid conversations pass through structurally unchanged
+    const ok = [
+        { role: 'system', content: 's' },
+        { role: 'user', content: 'u' },
+        { role: 'assistant', content: 'a' },
+        { role: 'user', content: 'u2' },
+    ];
+    assert.deepEqual(ensureAlternating(ok).map((m) => m.content), ok.map((m) => m.content));
 });

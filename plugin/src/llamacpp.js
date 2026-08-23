@@ -144,6 +144,9 @@ export class LlamaServerManager {
         this.starting = null;
         this.embedProc = null;
         this.embedStarting = null;
+        // models whose GGUF template fails under --jinja (probed on first
+        // load; they then always spawn in legacy template mode)
+        this.jinjaDisabled = new Set();
     }
 
     url(port) {
@@ -200,39 +203,93 @@ export class LlamaServerManager {
         if (this.loaded === model && this.proc) return;
         if (this.starting) return this.starting;
         this.starting = (async () => {
-            if (this.loaded !== model) this.#stopChat();
-            this.log(`starting llama-server for ${model} (ctx ${this.numCtx})`);
-            const args = [
-                '-m', filePath,
-                '-c', String(this.numCtx),
-                '-ngl', '999',
-                '--host', '127.0.0.1',
-                '--port', String(this.chatPort),
-                '--no-webui',
-                '--jinja',
-            ];
-            const child = this.#spawn(args, 'llama-server');
-            this.proc = child;
-            this.loaded = model;
-            child.on('exit', (code) => {
-                if (this.proc === child) {
-                    this.proc = null;
-                    this.loaded = null;
-                    this.log(`llama-server exited (code ${code}) — it will restart on the next request`);
+            let useJinja = !this.jinjaDisabled.has(model);
+            for (let attempt = 0; attempt < 2; attempt++) {
+                if (this.loaded !== model) this.#stopChat();
+                this.log(`starting llama-server for ${model} (ctx ${this.numCtx}${useJinja ? '' : ', legacy template mode'})`);
+                const args = [
+                    '-m', filePath,
+                    '-c', String(this.numCtx),
+                    '-ngl', '999',
+                    '--host', '127.0.0.1',
+                    '--port', String(this.chatPort),
+                    '--no-webui',
+                ];
+                if (useJinja) args.push('--jinja');
+                const child = this.#spawn(args, 'llama-server');
+                this.proc = child;
+                this.loaded = model;
+                child.on('exit', (code) => {
+                    if (this.proc === child) {
+                        this.proc = null;
+                        this.loaded = null;
+                        this.log(`llama-server exited (code ${code}) — it will restart on the next request`);
+                    }
+                });
+                try {
+                    await this.#waitForHealth(this.chatPort, 'chat');
+                } catch (err) {
+                    if (this.proc === child) {
+                        try { child.kill(); } catch { /* already gone */ }
+                        this.proc = null;
+                        this.loaded = null;
+                    }
+                    throw err;
                 }
-            });
-            try {
-                await this.#waitForHealth(this.chatPort, 'chat');
-            } catch (err) {
-                if (this.proc === child) {
-                    try { child.kill(); } catch { /* already gone */ }
-                    this.proc = null;
-                    this.loaded = null;
-                }
-                throw err;
+                // First-request template probe. Some GGUF templates (older
+                // Qwen builds) load healthy but fail EVERY request under
+                // --jinja's template analysis ("Unable to generate parser for
+                // this template") — fall back to legacy templating for them.
+                const probe = await this.#probeTemplate();
+                if (!probe.templateFailure) return;
+                if (!useJinja) throw new Error(`${model}: chat template fails even in legacy mode (${probe.detail})`);
+                this.log(`${model}: chat template fails under --jinja (${probe.detail}) — restarting without it`);
+                this.jinjaDisabled.add(model);
+                useJinja = false;
+                this.#stopChat();
             }
         })().finally(() => { this.starting = null; });
         return this.starting;
+    }
+
+    /**
+     * One-token chat completion against a freshly started server, shaped like
+     * the engine's most fragile request: a character who has only greeted
+     * (assistant-first history — initiative/follow-up turns). Some GGUF
+     * templates' parser generation fails exactly there while passing plain
+     * system+user requests. Only template/parser-shaped 400s are verdicts;
+     * anything else (OOM, weird model errors) is left for the real request.
+     */
+    async #probeTemplate() {
+        try {
+            const res = await this.fetchImpl(`${this.url(this.chatPort)}/v1/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: 'probe',
+                    // exactly what the engine sends for a greeting-only
+                    // character (initiative turn), post-transform
+                    messages: [
+                        { role: 'system', content: 'probe' },
+                        { role: 'user', content: '…' },
+                        { role: 'assistant', content: 'hi' },
+                        { role: 'user', content: 'hi' },
+                    ],
+                    max_tokens: 1,
+                    stream: false,
+                }),
+            });
+            if (res.ok) return { ok: true };
+            const detail = String(await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 200);
+            if (res.status === 400 && /parser|template|jinja|system message/i.test(detail)) {
+                return { templateFailure: true, detail };
+            }
+            this.log(`template probe got HTTP ${res.status} — not template-shaped, continuing`);
+            return { ok: false };
+        } catch (err) {
+            this.log(`template probe could not run (${err.message}) — continuing`);
+            return { ok: false };
+        }
     }
 
     /** Ensure the (tiny) embedding model server is up on its own port. */
@@ -288,6 +345,32 @@ export function foldTrailingSystem(messages) {
     const folded = tail.map((m) => String(m.content ?? '').trim()).filter(Boolean).join('\n\n');
     if (!folded) return head;
     return [...head, { role: 'user', content: `(Instructions for your next message — follow them, never mention them:\n${folded})` }];
+}
+
+/**
+ * Some GGUF chat templates (the strict ChatML one in Dark-Desires-12B v1.0)
+ * hard-require user/assistant ALTERNATION after the optional system message
+ * — "conversation roles must alternate user/assistant/user/assistant..." —
+ * and 400 otherwise. The engine naturally produces two violations:
+ * a character who only greeted (assistant-first history: initiative turns)
+ * and our folded trailing instructions (a second user turn in a row).
+ * Merge consecutive same-role messages; prepend a minimal user turn before
+ * a leading assistant message. A no-op for lenient templates.
+ * @param {Array<{role:string,content:string}>} messages
+ */
+export function ensureAlternating(messages) {
+    const first = messages.findIndex((m) => m.role !== 'system');
+    if (first < 0) return messages;
+    const merged = [];
+    for (const m of messages.slice(first)) {
+        const prev = merged[merged.length - 1];
+        if (prev && prev.role === m.role) prev.content = `${prev.content}\n\n${m.content}`;
+        else merged.push({ ...m });
+    }
+    if (merged.length && merged[0].role === 'assistant') {
+        merged.unshift({ role: 'user', content: '…' });
+    }
+    return [...messages.slice(0, first), ...merged];
 }
 
 /**
@@ -442,7 +525,7 @@ export class LlamaCppClient {
         const s = { ...(this.samplers ?? {}), ...(req.samplers ?? {}) };
         const body = {
             model: req.model,
-            messages: foldTrailingSystem(req.messages),
+            messages: ensureAlternating(foldTrailingSystem(req.messages)),
             stream: false,
             max_tokens: req.numPredict ?? 160,
             temperature: req.temperature ?? s.temperature ?? 0.7,
