@@ -232,7 +232,16 @@ export class OllamaClient {
         if (!res.ok) {
             throw new Error(`Ollama /api/chat -> HTTP ${res.status}: ${json.error ?? ''}`);
         }
-        return String(json?.message?.content ?? '').trim();
+        const out = String(json?.message?.content ?? '').trim();
+        this.promptLog?.record({
+            character: req.logMeta?.character,
+            kind: req.logMeta?.kind,
+            attempt: req.logMeta?.attempt,
+            model: req.model,
+            request: body,
+            response: out,
+        });
+        return out;
     }
 
     /**

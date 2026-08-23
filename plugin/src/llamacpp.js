@@ -562,7 +562,16 @@ export class LlamaCppClient {
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(`llama-server /chat/completions -> HTTP ${res.status}: ${json.error?.message ?? ''}`);
-        return String(json?.choices?.[0]?.message?.content ?? '').trim();
+        const out = String(json?.choices?.[0]?.message?.content ?? '').trim();
+        this.promptLog?.record({
+            character: req.logMeta?.character,
+            kind: req.logMeta?.kind,
+            attempt: req.logMeta?.attempt,
+            model: req.model,
+            request: { ...this.#chatBody(req), stream: false },
+            response: out,
+        });
+        return out;
     }
 
     /**
@@ -583,20 +592,35 @@ export class LlamaCppClient {
             throw new Error(`llama-server /chat/completions -> HTTP ${res.status}: ${json.error?.message ?? ''}`);
         }
         let buf = '';
-        for await (const chunk of res.body) {
-            buf += new TextDecoder().decode(chunk);
-            const lines = buf.split('\n');
-            buf = lines.pop();
-            for (const raw of lines) {
-                const line = raw.trim();
-                if (!line.startsWith('data:')) continue;
-                const payload = line.slice(5).trim();
-                if (payload === '[DONE]') return;
-                try {
-                    const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content ?? '';
-                    if (delta) yield delta;
-                } catch { /* partial line — next chunk completes it */ }
+        let full = '';
+        try {
+            for await (const chunk of res.body) {
+                buf += new TextDecoder().decode(chunk);
+                const lines = buf.split('\n');
+                buf = lines.pop();
+                for (const raw of lines) {
+                    const line = raw.trim();
+                    if (!line.startsWith('data:')) continue;
+                    const payload = line.slice(5).trim();
+                    if (payload === '[DONE]') return;
+                    try {
+                        const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content ?? '';
+                        if (delta) {
+                            full += delta;
+                            yield delta;
+                        }
+                    } catch { /* partial line — next chunk completes it */ }
+                }
             }
+        } finally {
+            this.promptLog?.record({
+                character: req.logMeta?.character,
+                kind: req.logMeta?.kind ?? 'web-chat',
+                attempt: req.logMeta?.attempt,
+                model: req.model,
+                request: { ...this.#chatBody(req), stream: true },
+                response: full,
+            });
         }
     }
 

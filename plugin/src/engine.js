@@ -694,6 +694,7 @@ export class Engine {
                     numCtx,
                     think,
                     samplers: presetInfo?.samplers,
+                    logMeta: { character: entry.name, kind, attempt: 'main' },
                 });
                 const cleaned = stripLeakedScaffolding(cleanModelOutput(raw));
                 if (cleaned.leaked) this.#audit(entry.name, 'leak_blocked', 'stripped leaked prompt scaffolding from the reply before sending');
@@ -716,6 +717,7 @@ export class Engine {
                     numCtx,
                     think,
                     samplers: presetInfo?.samplers,
+                    logMeta: { character: entry.name, kind, attempt: 'retry' },
                     });
                     const recleaned = stripLeakedScaffolding(cleanModelOutput(retry));
                     if (recleaned.leaked) this.#audit(entry.name, 'leak_blocked', 'stripped leaked prompt scaffolding from the retry');
@@ -769,6 +771,7 @@ export class Engine {
                     numCtx,
                         think,
                         samplers: usedPreset?.samplers,
+                        logMeta: { character: entry.name, kind, attempt: `burst-${i + 1}` },
                     });
                     const cleanedNext = stripLeakedScaffolding(cleanModelOutput(rawNext));
                     const parsed = extractFollowUpMarker(cleanedNext.text);
@@ -857,7 +860,7 @@ export class Engine {
                 ...history,
                 { role: 'user', content: '(write your private note for right now)' },
             ];
-            const raw = await this.ollama.chat({ model, messages, numPredict: 90 });
+            const raw = await this.ollama.chat({ model, messages, numPredict: 90, logMeta: { character: entry.name, kind: 'journal' } });
             // journal notes get re-injected into future prompts — never let
             // scaffolding contaminate them or it would compound on every turn
             const { text } = stripLeakedScaffolding(cleanModelOutput(raw));
@@ -894,6 +897,7 @@ export class Engine {
                 messages: [{ role: 'system', content: system }, ...history, { role: 'user', content: '(write your reflection now)' }],
                 temperature: 0.6,
                 numPredict: 120,
+                logMeta: { character: entry.name, kind: 'evolve' },
             });
             const { text: cleanText } = stripLeakedScaffolding(cleanModelOutput(raw));
             const text = sanitizeTextingOutput(cleanText).slice(0, 400);

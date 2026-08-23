@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.10';
+const EXT_VERSION = '0.6.11';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -175,6 +175,31 @@ function dashboardHtml() {
                     </h4>
                     <div class="autolife-muted">Every engine decision — replies (instant/delayed/ignored), initiative rolls and blocks, retries, model fallbacks, memory recalls, journal notes. Also live in Telegram via /audit on.</div>
                     <div id="autolife_audit_feed" class="autolife-audit-feed"></div>
+                </div>
+
+                <div class="autolife-section">
+                    <h4>Prompt log <span class="autolife-muted">(debug repeats — full text)</span>
+                        <a class="autolife-btn" id="autolife_plog_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a>
+                        <a class="autolife-btn" id="autolife_plog_purge" title="delete all entries"><i class="fa-solid fa-trash-can"></i></a>
+                    </h4>
+                    <div class="autolife-form-grid">
+                        <label>Capture every prompt sent to the model</label>
+                        <span><input type="checkbox" id="autolife_plog_enabled">
+                        keep newest <input type="number" id="autolife_plog_keep" min="10" max="5000" step="50" style="width:64px" value="500">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_plog_save">Save</button>
+                        <span id="autolife_plog_msg" class="autolife-muted"></span></span>
+                    </div>
+                    <div class="autolife-muted">One full-text file per generation (replies, retries, bursts, journal, evolve, web chats) — click an entry to inspect the exact messages, samplers, and raw response.</div>
+                    <div id="autolife_plog_feed" class="autolife-audit-feed"></div>
+                </div>
+                <div id="autolife_plog_viewer" style="display:none; position:fixed; inset:0; z-index:4000; background:rgba(0,0,0,0.6); overflow:auto; padding:24px;">
+                    <div style="max-width:900px; margin:0 auto; background:var(--SmartThemeBodyColor, #1c1c1e); border:1px solid var(--SmartThemeBorderColor, #666); border-radius:8px; padding:16px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <b id="autolife_plog_viewer_title"></b>
+                            <a class="autolife-btn" id="autolife_plog_viewer_close"><i class="fa-solid fa-xmark"></i> close</a>
+                        </div>
+                        <div id="autolife_plog_viewer_body"></div>
+                    </div>
                 </div>
 
                 <div class="autolife-section">
@@ -702,6 +727,47 @@ async function loadAudit() {
         $('#autolife_audit_feed').html(entries.map(auditRow).reverse().join('') || '<div class="autolife-muted">Nothing yet — engine decisions will appear here.</div>');
         applyAuditFilter();
     } catch { /* plugin offline */ }
+}
+
+// ---------------------------------------------------------------- prompt log
+
+const escHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+async function loadPromptLogSection() {
+    try {
+        const r = await api('/promptlog?limit=200');
+        $('#autolife_plog_enabled').prop('checked', !!r.enabled);
+        $('#autolife_plog_keep').val(r.keep ?? 500);
+        const rows = (r.entries ?? []).map((e) => {
+            const when = new Date(e.ts).toLocaleTimeString();
+            const tag = [e.character, e.kind, e.attempt].filter(Boolean).join(' · ');
+            return `<div class="autolife-audit-row" data-plog-id="${escHtml(e.id)}" style="cursor:pointer;">
+                <span class="autolife-muted">${when}</span> — <b>${escHtml(tag)}</b>
+                <span class="autolife-muted"> · ${e.messages} msgs · ${(e.promptChars / 1000).toFixed(1)}k chars</span><br>
+                <span class="autolife-muted">${escHtml(e.responsePreview) || '(empty response)'}</span>
+            </div>`;
+        });
+        $('#autolife_plog_feed').html(rows.join('') || '<div class="autolife-muted">Nothing logged yet — enable capture, then generate.</div>');
+    } catch { /* plugin offline */ }
+}
+
+async function openPromptLogEntry(id) {
+    try {
+        const e = await api(`/promptlog/file?id=${encodeURIComponent(id)}`);
+        $('#autolife_plog_viewer_title').text(`${e.character ?? '(engine)'} · ${e.kind ?? 'chat'}${e.attempt ? ` · ${e.attempt}` : ''} · ${new Date(e.ts).toLocaleString()}`);
+        const opts = { ...e.request };
+        delete opts.messages;
+        const msgHtml = (e.request?.messages ?? []).map((m) =>
+            `<div style="margin-top:10px;"><b>${escHtml(m.role)}</b>
+             <pre style="white-space:pre-wrap; margin:4px 0 0; font-size:0.9em;">${escHtml(m.content)}</pre></div>`).join('');
+        $('#autolife_plog_viewer_body').html(
+            `<div class="autolife-muted">model: ${escHtml(e.model)} · options: ${escHtml(JSON.stringify(opts))}</div>` +
+            msgHtml +
+            `<div style="margin-top:14px;"><b>response</b>
+             <pre style="white-space:pre-wrap; margin:4px 0 0; font-size:0.9em;">${escHtml(e.response) || '(empty)'}</pre></div>`,
+        );
+        $('#autolife_plog_viewer').show();
+    } catch (err2) { toast(err2.message); }
 }
 
 function applyAuditFilter() {
@@ -1475,6 +1541,35 @@ function wireEvents() {
     $('#autolife_audit_filter').on('change', applyAuditFilter);
     $('#autolife_audit_refresh').on('click', loadAudit);
 
+    $('#autolife_plog_refresh').on('click', loadPromptLogSection);
+    $('#autolife_plog_save').on('click', async () => {
+        try {
+            await api('/settings', 'POST', {
+                prompt_log: {
+                    enabled: $('#autolife_plog_enabled').prop('checked'),
+                    keep: Number($('#autolife_plog_keep').val()) || 500,
+                },
+            });
+            $('#autolife_plog_msg').text('saved ✓');
+            setTimeout(() => $('#autolife_plog_msg').text(''), 4000);
+        } catch (e) { $('#autolife_plog_msg').text(e.message); }
+    });
+    $('#autolife_plog_purge').on('click', async () => {
+        if (!confirm('Delete ALL captured prompts?')) return;
+        try {
+            const r = await api('/promptlog/purge', 'POST');
+            toast(`Purged ${r.removed} entries`);
+            loadPromptLogSection();
+        } catch (e) { toast(e.message); }
+    });
+    $(document).on('click', '[data-plog-id]', (ev) => {
+        openPromptLogEntry(String($(ev.currentTarget).data('plog-id')));
+    });
+    $('#autolife_plog_viewer_close').on('click', () => $('#autolife_plog_viewer').hide());
+    $('#autolife_plog_viewer').on('click', (ev) => {
+        if (ev.target === ev.currentTarget) $('#autolife_plog_viewer').hide();
+    });
+
     // --- memory ---
     $('#autolife_embed_save').on('click', async () => {
         const model = $('#autolife_embed_model').val().trim();
@@ -1715,6 +1810,7 @@ jQuery(() => {
             loadTelegramSection();
             loadModelSection();
             loadAudit();
+            loadPromptLogSection();
             loadMemorySection();
             loadCharacterEditor();
             watchCharacterList();

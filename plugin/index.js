@@ -17,6 +17,7 @@ import { createCommandRegistry } from './src/commands.js';
 import { registerRoutes } from './src/routes.js';
 import { MemoryStore } from './src/memory.js';
 import { startOllamaShim } from './src/ollama-shim.js';
+import { PromptLog } from './src/prompt-log.js';
 
 const log = (m) => console.log(`[Autolife] ${m}`);
 
@@ -72,6 +73,12 @@ seedWebUiConnection();
 
 const store = new StateStore(path.join(USER_DIR, 'autolife'));
 let ollamaShim = null; // Ollama-API shim for ST's web UI (llamacpp backend)
+// full prompt/response capture for debugging repeats — clients check the
+// enabled flag per record, so it costs nothing while off
+const promptLog = new PromptLog(path.join(USER_DIR, 'autolife', 'promptlog'), {
+    getSettings: () => store.loadSettings(),
+    log,
+});
 const chatStore = new ChatStore({ dataRoot: DATA_ROOT, userHandle: USER_HANDLE });
 const cards = new CardRegistry(path.join(USER_DIR, 'characters'));
 // Backend switch (env): 'ollama' (default) or 'llamacpp' — needed for Qwen3.5
@@ -106,6 +113,7 @@ if (ollama.manager) {
     warmUp();
 }
 const memory = new MemoryStore(path.join(USER_DIR, 'autolife', 'memory'), (m) => log(`memory: ${m}`));
+ollama.promptLog = promptLog;
 
 // ---- SSE hub (feeds the UI extension and mirrors engine events) ----
 const sseClients = new Set();
@@ -206,6 +214,7 @@ async function init(router) {
         transport: transportView,
         charactersDir: cards.dir,
         userDir: USER_DIR,
+        promptLog,
         broadcast,
         addSseClient,
         restartTransport: startTransport,

@@ -65,6 +65,12 @@ export function defaultSettings() {
             journal: true,
             evolve: true,
         },
+        // Full prompt/response logging for debugging repeats — one JSON file
+        // per generation under autolife/promptlog/. Off by default.
+        prompt_log: {
+            enabled: false,
+            keep: 500, // auto-prune to the newest N entries
+        },
         // Your sleep, not theirs: no engine-initiated texts inside this window,
         // due replies hold until it ends. Times in the given IANA timezone.
         quiet_hours: {
@@ -142,6 +148,7 @@ export class StateStore {
             prompt: { ...base.prompt, ...(saved.prompt ?? {}) },
             quiet_hours: { ...base.quiet_hours, ...(saved.quiet_hours ?? {}) },
             features: { ...base.features, ...(saved.features ?? {}) },
+            prompt_log: { ...base.prompt_log, ...(saved.prompt_log ?? {}) },
             telegram: { ...base.telegram, ...(saved.telegram ?? {}) },
         };
         if (!merged.telegram.token && process.env.TELEGRAM_BOT_TOKEN) merged.telegram.token = process.env.TELEGRAM_BOT_TOKEN;

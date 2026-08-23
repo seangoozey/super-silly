@@ -44,7 +44,7 @@ const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
  *           addSseClient: (res:object)=>void, restartTransport: ()=>void, log: (m:string)=>void }} deps
  */
 export function registerRoutes(router, deps) {
-    const { engine, store, cards, chatStore, ollama, memory, transport, charactersDir, broadcast, addSseClient, restartTransport, log, userDir } = deps;
+    const { engine, store, cards, chatStore, ollama, memory, transport, charactersDir, broadcast, addSseClient, restartTransport, log, userDir, promptLog } = deps;
 
     /** Persist + broadcast an audit entry from a route action. */
     const audit = (character, kind, text) => {
@@ -216,6 +216,16 @@ export function registerRoutes(router, deps) {
                 if (typeof body.features[k] === 'boolean' && before[k] !== body.features[k]) {
                     audit(null, 'engine', k + ' ' + (body.features[k] ? 'enabled' : 'disabled') + ' globally');
                 }
+            }
+        }
+        if (body.prompt_log) {
+            const before = settings.prompt_log?.enabled === true;
+            settings.prompt_log = { ...settings.prompt_log, ...body.prompt_log };
+            if (typeof body.prompt_log.keep === 'number' && Number.isFinite(body.prompt_log.keep)) {
+                settings.prompt_log.keep = Math.max(10, Math.round(body.prompt_log.keep));
+            }
+            if (typeof body.prompt_log.enabled === 'boolean' && before !== body.prompt_log.enabled) {
+                audit(null, 'engine', `prompt logging ${body.prompt_log.enabled ? 'enabled' : 'disabled'}${body.prompt_log.enabled ? ' — every generation is saved to autolife/promptlog/' : ''}`);
             }
         }
         if (body.quiet_hours) {
@@ -432,6 +442,28 @@ export function registerRoutes(router, deps) {
             broadcast('state_changed', { character: entry.name });
         }
         res.json({ ok: true, chatFile: file });
+    }));
+
+    // ---- prompt log (debug repeats) ----
+    router.get('/promptlog', wrap(async (req, res) => {
+        const limit = Math.min(500, Math.max(1, Number(req.query?.limit) || 200));
+        res.json({
+            enabled: store.loadSettings().prompt_log?.enabled === true,
+            keep: store.loadSettings().prompt_log?.keep ?? 500,
+            entries: promptLog ? promptLog.list(limit) : [],
+        });
+    }));
+
+    router.get('/promptlog/file', wrap(async (req, res) => {
+        const entry = promptLog?.get(String(req.query?.id ?? ''));
+        if (!entry) return res.status(404).json({ error: 'no such prompt log entry' });
+        res.json(entry);
+    }));
+
+    router.post('/promptlog/purge', wrap(async (req, res) => {
+        const removed = promptLog?.purge() ?? 0;
+        audit(null, 'engine', `prompt log purged (${removed} entries)`);
+        res.json({ ok: true, removed });
     }));
 
     // ---- per-character chat management (panel dropdown) ----
