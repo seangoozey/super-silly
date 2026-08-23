@@ -508,3 +508,29 @@ test('initiative blocks are visible in status', async () => {
     n = s.characters[0];
     assert.match(n.initiative.blockedReason, /less than 20 min/);
 });
+
+test('journal generation carries her identity (personality, scenario, relationship) and not old journal notes', async () => {
+    const card = characterCard('Diary', {
+        journal: { enabled: true },
+        schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], start: '09:00', end: '23:00', activity: 'hanging out at home', availability: 0.7 }],
+    });
+    const h = buildHarness({ card, rngValues: [], reply: 'I keep wondering whether I should tell Sean about the test results. I am nervous but hopeful.' });
+    // seed a contaminated old note — it must NOT leak into the new generation
+    const state = stateOf(h.store, 'Diary');
+    state.journal = [{ ts: '2026-01-01T00:00:00Z', text: 'the mailman came early, it came, just got my package' }];
+    h.store.saveState(state);
+
+    const note = await h.engine.journalNow('Diary');
+    assert.ok(note, 'a journal note was produced');
+
+    const req = h.chatReqs.at(-1);
+    const system = req.messages[0].content;
+    assert.ok(req.messages[0].role === 'system');
+    assert.ok(/Personality:/.test(system), 'personality present');
+    assert.ok(/Situation between you two:/.test(system), 'scenario present');
+    assert.ok(/Your relationship with/.test(system), 'relationship present');
+    assert.ok(/Your life right now:/.test(system), 'life context present');
+    assert.ok(!/mailman/.test(system), 'old journal notes do not feed back');
+    assert.ok(!/How you text:/.test(system), 'texting style rules stay out of diary mode');
+    assert.ok(/PRIVATE DIARY THOUGHTS/.test(system), 'directive rides along');
+});

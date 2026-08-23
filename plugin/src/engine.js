@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
 import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
@@ -847,6 +847,24 @@ export class Engine {
             life,
             userName: this.chatStore.userName,
         });
+        // Journal notes were generated from name+time+recent texts alone —
+        // the model knew nothing of her personality, scenario, or relationship
+        // and invented baseless "memories" that then fed back into real
+        // prompts. Give journaling the same identity context as conversation
+        // (deliberately WITHOUT the existing journal: a fresh note must not
+        // be anchored by the old ones).
+        const sections = promptSections({
+            card: entry.card,
+            autolife: entry.autolife,
+            life,
+            relationshipScore: state.relationship,
+            journal: [],
+            userName: this.chatStore.userName,
+        });
+        const identity = [
+            sections.identity, sections.description, sections.personality,
+            sections.scenario, sections.aboutUser, sections.relationship, sections.life,
+        ].filter(Boolean).join('\n\n');
         try {
             const model = this.effectiveModel();
             if (!(await this.ollama.hasModel(model))) return;
@@ -856,7 +874,7 @@ export class Engine {
                 this.chatStore.userName,
             );
             const messages = [
-                { role: 'system', content: directive },
+                { role: 'system', content: `${identity}\n\n${directive}` },
                 ...history,
                 { role: 'user', content: '(write your private note for right now)' },
             ];

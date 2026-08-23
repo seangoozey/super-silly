@@ -436,10 +436,8 @@ export function buildChatMessages(req) {
  */
 export function buildJournalPrompt(ctx) {
     const data = ctx.card.data ?? ctx.card;
-    const local = ctx.life.local;
     return [
-        `You are ${data.name}. It is ${local.hhmm} on a ${local.weekdayName ?? 'day'} and you are currently ${ctx.life.activity}.`,
-        `Write 1-2 sentences of PRIVATE DIARY THOUGHTS — internal reflection, never anything you would say out loud.`,
+        `Write 1-2 sentences of ${data.name}'s PRIVATE DIARY THOUGHTS — internal reflection, never anything you would say out loud.`,
         `Style rules: every sentence is complete (subject and verb, ending punctuation); write ABOUT your feelings, plans, worries, opinions, or observations — never transcribe, quote, reply to, or summarize any text message; do not retell events you already texted ${ctx.userName} about — note what they meant to you or what you keep thinking about them.`,
         `Ground everything ONLY in your current activity and the ACTUAL messages shown in this conversation. NEVER invent conversations, events, or things ${ctx.userName} said that are not shown — if nothing notable happened with ${ctx.userName}, reflect on your own day or inner life instead. Plain text only, first person, no headings.`,
     ].join(' ');
