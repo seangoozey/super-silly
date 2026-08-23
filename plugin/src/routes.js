@@ -444,6 +444,40 @@ export function registerRoutes(router, deps) {
         res.json({ ok: true, chatFile: file });
     }));
 
+    // ---- journal management (panel) ----
+    router.post('/journal/new', wrap(async (req, res) => {
+        const body = await readBody(req);
+        try {
+            const text = await engine.journalNow(String(body.name ?? ''));
+            broadcast('state_changed', { character: String(body.name ?? '') });
+            res.json({ ok: true, text });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
+        }
+    }));
+
+    router.post('/journal/delete', wrap(async (req, res) => {
+        const body = await readBody(req);
+        try {
+            const ok = engine.deleteJournalEntry(String(body.name ?? ''), String(body.ts ?? ''));
+            broadcast('state_changed', { character: String(body.name ?? '') });
+            res.json({ ok });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
+        }
+    }));
+
+    router.post('/journal/edit', wrap(async (req, res) => {
+        const body = await readBody(req);
+        try {
+            const ok = engine.editJournalEntry(String(body.name ?? ''), String(body.ts ?? ''), String(body.text ?? ''));
+            broadcast('state_changed', { character: String(body.name ?? '') });
+            res.json({ ok });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
+        }
+    }));
+
     // ---- prompt log (debug repeats) ----
     router.get('/promptlog', wrap(async (req, res) => {
         const limit = Math.min(500, Math.max(1, Number(req.query?.limit) || 200));

@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, historyToOllama, buildMemoryContext, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
 import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
@@ -860,10 +860,11 @@ export class Engine {
                 ...history,
                 { role: 'user', content: '(write your private note for right now)' },
             ];
-            const raw = await this.ollama.chat({ model, messages, numPredict: 90, logMeta: { character: entry.name, kind: 'journal' } });
+            const raw = await this.ollama.chat({ model, messages, numPredict: 220, logMeta: { character: entry.name, kind: 'journal' } });
             // journal notes get re-injected into future prompts — never let
             // scaffolding contaminate them or it would compound on every turn
-            const { text } = stripLeakedScaffolding(cleanModelOutput(raw));
+            const { text: stripped } = stripLeakedScaffolding(cleanModelOutput(raw));
+            const text = trimToCompleteSentence(stripped).slice(0, 400);
             if (!text) return;
             state.journal = [...(state.journal ?? []), { ts: now.toISOString(), text }].slice(-40);
             state.lastJournalAt = now.toISOString();
@@ -873,6 +874,45 @@ export class Engine {
         } catch (err) {
             this.log(`journal for "${entry.name}" failed: ${err.message}`);
         }
+    }
+
+    /** Force one journal entry now (panel button). @returns the note or null */
+    async journalNow(character) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        if (this.settings.features?.journal === false) throw new Error('Journal is globally disabled (dashboard options).');
+        if (!entry.autolife.journal?.enabled) throw new Error(`Journal is not enabled for "${character}" (their Autolife panel).`);
+        const state = this.#state(entry);
+        this.#ensureChat(entry, state);
+        const life = evaluate(entry.autolife, this.nowFn());
+        await this.#journal(entry, state, life, new Date());
+        return state.journal?.at(-1)?.text ?? null;
+    }
+
+    /** Remove one journal entry (panel). @returns success */
+    deleteJournalEntry(character, ts) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        const state = this.#state(entry);
+        const before = state.journal?.length ?? 0;
+        state.journal = (state.journal ?? []).filter((j) => j.ts !== ts);
+        this.store.saveState(state);
+        this.#audit(character, 'journal', `journal entry deleted (${before - state.journal.length} removed)`);
+        return state.journal.length < before;
+    }
+
+    /** Edit one journal entry's text (panel). */
+    editJournalEntry(character, ts, text) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        const state = this.#state(entry);
+        const note = (state.journal ?? []).find((j) => j.ts === ts);
+        if (!note) return false;
+        note.text = String(text ?? '').trim().slice(0, 400);
+        note.edited = true;
+        this.store.saveState(state);
+        this.#audit(character, 'journal', `journal entry edited: "${note.text.slice(0, 80)}${note.text.length > 80 ? '…' : ''}"`);
+        return true;
     }
 
     /**

@@ -55,6 +55,11 @@ test('chat management routes: list, switch, and start fresh from the panel', asy
     // first chat comes into being on demand (engine-style), then a second one
     const first = h.chatStore.createChat('Chatty', 'hey, Chatty here');
     const second = h.chatStore.createChat('Chatty', 'hey, Chatty here');
+    // the engine adopts the latest chat on its next run — pin it explicitly
+    // (same-millisecond files make mtime-based "latest" ambiguous in a test)
+    const st = h.store.loadState('Chatty', { initialRelationship: 20 });
+    st.chatFile = second;
+    h.store.saveState(st);
 
     // default active = latest; list both with counts and the active flag
     let r = await call(router, 'GET', '/chats', { query: { name: 'Chatty' } });

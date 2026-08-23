@@ -365,11 +365,11 @@ export function historyToOllama(history, characterName, userName, limit = 24) {
         .filter((m) => m.content.trim().length > 0);
 }
 
-const DIRECTIVES = {
+export const DIRECTIVES = {
     initiative: (userName) =>
-        `(Private direction, invisible to ${userName}: you decided to text ${userName} right now, unprompted. Send exactly ONE message. Make it feel caused by your day, the time, or something between you two. Do not reference these directions.)`,
+        `(Private direction, invisible to ${userName}: you decided to text ${userName} right now, unprompted. Send exactly ONE message. Make it feel caused by your day, the time, or something between you two. Look at your previous messages in the conversation: NEVER bring up a topic or event you already texted them about — find something new to say, or text about how you feel right now. Do not reference these directions.)`,
     followup: (userName) =>
-        `(Private direction, invisible to ${userName}: you texted ${userName} earlier and they never replied. Send ONE more short message — a nudge, in character; casual, never needy. Do not reference these directions.)`,
+        `(Private direction, invisible to ${userName}: you texted ${userName} earlier and they never replied. Send ONE more short message — a nudge, in character; casual, never needy; do not repeat what your earlier texts said. Do not reference these directions.)`,
     catchup: (userName) =>
         `(Private direction, invisible to ${userName}: ${userName} sent you a message earlier that you never answered because you were busy or missed it. Now text them ONE message that acknowledges it — apologize or not, however you'd really do it. Do not reference these directions.)`,
 };
@@ -429,15 +429,32 @@ export function buildChatMessages(req) {
  * messages: the model must not invent conversations or events involving the
  * user that didn't happen (ungrounded journals were fabricating shared
  * history that then leaked into behavior as if it were real).
+ * Observed failure mode this shape guards against: entries that transcribe
+ * text-message dialogue (chatty fragments, quoted exchanges, truncations) —
+ * those read back into prompts as noise and anchor the character into
+ * re-texting the same events.
  */
 export function buildJournalPrompt(ctx) {
     const data = ctx.card.data ?? ctx.card;
     const local = ctx.life.local;
     return [
         `You are ${data.name}. It is ${local.hhmm} on a ${local.weekdayName ?? 'day'} and you are currently ${ctx.life.activity}.`,
-        `Write 1-2 short sentences of private notes to yourself about what you have been doing, thinking, or feeling.`,
-        `Ground the notes ONLY in your current activity and the ACTUAL messages shown in this conversation. NEVER invent conversations, events, or things ${ctx.userName} said that are not shown — if nothing notable happened with ${ctx.userName}, write about your own day, thoughts or feelings instead. Plain text only, first person, no headings.`,
+        `Write 1-2 sentences of PRIVATE DIARY THOUGHTS — internal reflection, never anything you would say out loud.`,
+        `Style rules: every sentence is complete (subject and verb, ending punctuation); write ABOUT your feelings, plans, worries, opinions, or observations — never transcribe, quote, reply to, or summarize any text message; do not retell events you already texted ${ctx.userName} about — note what they meant to you or what you keep thinking about them.`,
+        `Ground everything ONLY in your current activity and the ACTUAL messages shown in this conversation. NEVER invent conversations, events, or things ${ctx.userName} said that are not shown — if nothing notable happened with ${ctx.userName}, reflect on your own day or inner life instead. Plain text only, first person, no headings.`,
     ].join(' ');
+}
+
+/**
+ * Cut a journal note back to its last complete sentence when generation was
+ * truncated mid-thought (a num_predict cap used to leave entries hanging
+ * mid-word, which read like broken text messages).
+ */
+export function trimToCompleteSentence(text) {
+    const t = String(text ?? '').trim();
+    if (/[.!?]["')\]]?$/.test(t)) return t;
+    const cut = Math.max(t.lastIndexOf('.'), t.lastIndexOf('!'), t.lastIndexOf('?'));
+    return cut >= 0 ? t.slice(0, cut + 1).trim() : t;
 }
 
 /**

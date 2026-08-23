@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.11';
+const EXT_VERSION = '0.6.12';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -229,14 +229,17 @@ function dashboardHtml() {
                         </select>
                         <label>Context window (num_ctx, 0=default)</label>
                         <input type="number" id="autolife_num_ctx" min="0" max="131072" step="1024" value="0">
-                        <label>Sampler preset (ST Text Completion)</label>
+                        <label>Sampler presets (per model)</label>
                         <span>
+                            <select id="autolife_preset_model" style="max-width:210px"></select>
                             <select id="autolife_preset_select"></select>
-                            <button type="button" class="menu_button autolife-btn" id="autolife_preset_assign">Assign to current model</button>
+                            <button type="button" class="menu_button autolife-btn" id="autolife_preset_assign">Assign</button>
+                            <button type="button" class="menu_button autolife-btn" id="autolife_preset_clear">Clear</button>
                             <span id="autolife_preset_msg" class="autolife-muted"></span>
                         </span>
+                        <span id="autolife_preset_summary" class="autolife-muted" style="grid-column:1 / -1;"></span>
                     </div>
-                    <div class="autolife-muted">Presets come from SillyTavern's Text Completion preset manager (AI → Text Completion → presets drawer) — edit or import them there; the assignment here applies a preset's samplers per model.</div>
+                    <div class="autolife-muted">Presets come from SillyTavern's Text Completion preset manager (AI → Text Completion → presets drawer) — edit or import them there; an assignment overrides the engine sampler settings for that model's generations.</div>
                     <div style="margin-top:6px;">
                         <button type="button" class="menu_button autolife-btn" id="autolife_model_use">Use</button>
                         <button type="button" class="menu_button autolife-btn" id="autolife_model_pull">Pull</button>
@@ -368,7 +371,7 @@ function panelModalHtml() {
                 </div>
 
                 <div class="autolife-section">
-                    <h4>Journal <a class="autolife-btn" id="autolife_panel_journal_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a></h4>
+                    <h4>Journal <a class="autolife-btn" id="autolife_panel_journal_new" title="write one entry now"><i class="fa-solid fa-pen-to-square"></i></a> <a class="autolife-btn" id="autolife_panel_journal_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a></h4>
                     <div id="autolife_panel_journal" class="autolife-audit-feed"></div>
                 </div>
 
@@ -526,7 +529,11 @@ async function refreshPanel() {
 
         const journal = (c.journal ?? []).slice().reverse();
         $('#autolife_panel_journal').html(journal.length
-            ? journal.map((j) => `<div class="autolife-audit-row"><span class="autolife-muted">${new Date(j.ts).toLocaleString()}</span> — ${j.text}</div>`).join('')
+            ? journal.map((j) => `<div class="autolife-audit-row" data-jts="${escHtml(j.ts)}" data-raw="${escHtml(j.text)}">
+                <span class="autolife-muted">${new Date(j.ts).toLocaleString()}${j.edited ? ' · edited' : ''}</span> — ${escHtml(j.text)}
+                <a class="autolife-btn" data-journal-edit="${escHtml(j.ts)}" title="edit this entry"><i class="fa-solid fa-pen"></i></a>
+                <a class="autolife-btn" data-journal-del="${escHtml(j.ts)}" title="delete this entry"><i class="fa-solid fa-trash-can"></i></a>
+            </div>`).join('')
             : '<div class="autolife-muted">No journal entries yet — they accumulate every few waking hours.</div>');
 
         const a = card.autolife;
@@ -1222,22 +1229,46 @@ async function loadModelSection() {
         ];
         $('#autolife_model_select').html(options.map((o) => `<option value="${o.value}" ${o.value === m.current ? 'selected' : ''}>${o.label}</option>`).join(''));
         $('#autolife_think').val(m.think ?? 'off');
+        state.modelOptions = options.map((o) => o.value);
         state.presetAssignments = m.presetAssignments ?? {};
         refreshModelButtons();
     } catch { /* ignore */ }
     loadPresetOptions(m.current);
 }
 
-/** Fill the sampler-preset dropdown; marks the current model's assignment. */
+/** Sampler-preset manager: per-model dropdown + preset dropdown + summary. */
 async function loadPresetOptions(currentModel) {
-    try {
-        const p = await api('/presets');
-        const assigned = p.assignments?.[currentModel] ?? '';
-        const opts = ['<option value="">(engine defaults)</option>']
-            .concat((p.presets ?? []).map((n) => `<option value="${n.replace(/"/g, '&quot;')}" ${n === assigned ? 'selected' : ''}>${n}</option>`));
-        $('#autolife_preset_select').html(opts.join(''));
-        state.presetAssignments = p.assignments ?? {};
+        try {
+            const p = await api('/presets');
+            state.presetList = p.presets ?? [];
+            state.presetAssignments = p.assignments ?? {};
+        // model choices: the same list the model picker shows
+        const models = state.modelOptions ?? (currentModel ? [currentModel] : []);
+        const sel = $('#autolife_preset_model');
+        if (sel.find('option').length !== models.length || models.some((m, i) => sel.find('option').eq(i).val() !== m)) {
+            sel.html(models.map((m) => `<option value="${escHtml(m)}" ${m === currentModel ? 'selected' : ''}>${escHtml(m)}</option>`).join('') || '<option value="">(no models)</option>');
+        }
+        renderPresetAssignment();
     } catch { /* ignore */ }
+}
+
+function renderPresetAssignment() {
+    const model = $('#autolife_preset_model').val() ?? '';
+    const assigned = state.presetAssignments?.[model] ?? '';
+    const p = state.presetList ?? [];
+    $('#autolife_preset_select').html(
+        ['<option value="">none — engine sampler settings</option>']
+            .concat(p.map((n) => `<option value="${escHtml(n)}" ${n === assigned ? 'selected' : ''}>${escHtml(n)}</option>`))
+            .join(''),
+    );
+    const rows = Object.entries(state.presetAssignments ?? {})
+        .map(([m, preset]) => `${escHtml(shortModelName(m))} → ${escHtml(preset)}`);
+    $('#autolife_preset_summary').text(rows.length ? rows.join('   ·   ') : 'no assignments yet');
+}
+
+function shortModelName(m) {
+    const s = String(m);
+    return s.startsWith('hf.co/') ? s.slice(6) : s;
 }
 
 /** Pull button reflects the chosen model's install state. */
@@ -1405,6 +1436,45 @@ function wireEvents() {
             .catch((e) => toast(e.message));
     });
     $('#autolife_panel_journal_refresh').on('click', refreshPanel);
+
+    $('#autolife_panel_journal_new').on('click', async () => {
+        if (!panelChar) return;
+        toast('writing a journal entry…');
+        try {
+            const r = await api('/journal/new', 'POST', { name: panelChar });
+            toast(r.text ? `Journaled: "${String(r.text).slice(0, 80)}…"` : 'nothing came of it');
+            refreshPanel();
+        } catch (e) { toast(e.message); }
+    });
+
+    $(document).on('click', '[data-journal-del]', (ev) => {
+        const ts = String($(ev.currentTarget).data('journal-del'));
+        if (!panelChar || !confirm('Delete this journal entry?')) return;
+        api('/journal/delete', 'POST', { name: panelChar, ts })
+            .then(() => refreshPanel())
+            .catch((e) => toast(e.message));
+    });
+
+    $(document).on('click', '[data-journal-edit]', (ev) => {
+        const ts = String($(ev.currentTarget).data('journal-edit'));
+        const row = $(`[data-jts="${CSS.escape(ts)}"]`).first();
+        if (!row.length || !panelChar) return;
+        row.html(`
+            <textarea class="autolife-journal-edit" rows="3" style="width:100%">${escHtml(row.attr('data-raw'))}</textarea>
+            <button type="button" class="menu_button autolife-btn" data-journal-save="${escHtml(ts)}">Save</button>
+            <button type="button" class="menu_button autolife-btn" data-journal-cancel="1">Cancel</button>`);
+    });
+
+    $(document).on('click', '[data-journal-save]', async (ev) => {
+        const ts = String($(ev.currentTarget).data('journal-save'));
+        const text = $(ev.currentTarget).closest('[data-jts]').find('textarea').val();
+        try {
+            await api('/journal/edit', 'POST', { name: panelChar, ts, text });
+            refreshPanel();
+        } catch (e) { toast(e.message); }
+    });
+
+    $(document).on('click', '[data-journal-cancel]', () => refreshPanel());
 
     $(document).on('click', '#autolife_chat_switch', async () => {
         if (!panelChar) return;
@@ -1692,14 +1762,24 @@ function wireEvents() {
             toast(`Thinking set to ${think}`);
         } catch (e) { toast(e.message); }
     });
+    $('#autolife_preset_model').on('change', renderPresetAssignment);
     $('#autolife_preset_assign').on('click', async () => {
         try {
-            const model = chosenModel();
+            const model = $('#autolife_preset_model').val();
             const preset = $('#autolife_preset_select').val() || '';
             await api('/preset/assign', 'POST', { model, preset });
             $('#autolife_preset_msg').text('saved ✓');
             setTimeout(() => $('#autolife_preset_msg').text(''), 4000);
-            loadPresetOptions(model);
+            await loadPresetOptions(model);
+        } catch (e) { $('#autolife_preset_msg').text(e.message); }
+    });
+    $('#autolife_preset_clear').on('click', async () => {
+        try {
+            const model = $('#autolife_preset_model').val();
+            await api('/preset/assign', 'POST', { model, preset: '' });
+            $('#autolife_preset_msg').text('cleared ✓');
+            setTimeout(() => $('#autolife_preset_msg').text(''), 4000);
+            await loadPresetOptions(model);
         } catch (e) { $('#autolife_preset_msg').text(e.message); }
     });
 }

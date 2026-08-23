@@ -131,3 +131,22 @@ test('shipped preset files map cleanly (Scarlett card values; Desires full spec)
     assert.equal(desires.xtc_probability, 0.33);
     assert.equal(desires.xtc_threshold, 0.05);
 });
+
+test('trimToCompleteSentence cuts mid-thought truncation', async () => {
+    const { trimToCompleteSentence } = await import('../plugin/src/llm.js');
+    assert.equal(trimToCompleteSentence('I keep thinking about the package. It made me feel'), 'I keep thinking about the package.');
+    assert.equal(trimToCompleteSentence('Short!'), 'Short!');
+    assert.equal(trimToCompleteSentence('no punctuation at all in this one'), 'no punctuation at all in this one', 'too short to cut — kept whole');
+});
+
+test('journal prompt demands diary-style thoughts, not message transcription', async () => {
+    const { buildJournalPrompt, DIRECTIVES } = await import('../plugin/src/llm.js');
+    const p = buildJournalPrompt({ card: { data: { name: 'Hannah' } }, life: { activity: 'in her room', local: { hhmm: '23:10', weekdayName: 'Sunday' } }, userName: 'Sean' });
+    assert.ok(/PRIVATE DIARY THOUGHTS/.test(p));
+    assert.ok(/never transcribe, quote/.test(p));
+    assert.ok(/do not retell events you already texted/.test(p));
+    assert.ok(/complete \(subject and verb/.test(p));
+    // initiative directive now points at previous messages to break topic loops
+    assert.ok(/NEVER bring up a topic or event you already texted/.test(DIRECTIVES.initiative('Sean')));
+    assert.ok(/do not repeat what your earlier texts said/.test(DIRECTIVES.followup('Sean')));
+});
