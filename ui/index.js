@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.12';
+const EXT_VERSION = '0.6.13';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -1213,8 +1213,9 @@ async function loadTelegramSection() {
 }
 
 async function loadModelSection() {
+    let m = { presets: [], local: [], current: '' };
     try {
-        const m = await api('/model/list');
+        m = await api('/model/list');
         const installed = new Set(m.local.map((l) => l.name));
         state.installedModels = installed;
         const options = [
@@ -1243,7 +1244,7 @@ async function loadPresetOptions(currentModel) {
             state.presetList = p.presets ?? [];
             state.presetAssignments = p.assignments ?? {};
         // model choices: the same list the model picker shows
-        const models = state.modelOptions ?? (currentModel ? [currentModel] : []);
+        const models = state.modelOptions?.length ? state.modelOptions : (currentModel ? [currentModel] : []);
         const sel = $('#autolife_preset_model');
         if (sel.find('option').length !== models.length || models.some((m, i) => sel.find('option').eq(i).val() !== m)) {
             sel.html(models.map((m) => `<option value="${escHtml(m)}" ${m === currentModel ? 'selected' : ''}>${escHtml(m)}</option>`).join('') || '<option value="">(no models)</option>');
