@@ -348,8 +348,8 @@ export function promptSections(ctx) {
     }
 
     sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions, no quotation marks around the message. Never quote, repeat, or echo ${ctx.userName}'s words back to them — always write your own new words.`
-        + ' Messages in the conversation are prefixed with local timestamps like [Sun 8/23 1:03am] — the last timestamp is the present moment; reason from them about how much time has passed (something agreed for "tomorrow" means the NEXT day, not now).'
-        + ' If you want to send another text right away, end your message with {follow-up} — otherwise never write that marker.';
+        + ' Messages in the conversation are prefixed with local timestamps like [Sun 8/23 1:03am] — those are added by the system, NEVER write one yourself. The last timestamp is the present moment; reason from them about how much time has passed (something agreed for "tomorrow" means the NEXT day, not now).'
+        + ' You are writing ONE text message, not a story or a chat log: never write multiple messages, message numbering, or a chain of texts — if you genuinely have more to say right away, end with {follow-up} as the very last thing and write nothing after it.';
     sections.postHistory = data.post_history_instructions?.trim() ? `Additional standing instructions: ${sub(data.post_history_instructions)}` : null;
 
     return sections;
@@ -554,11 +554,11 @@ export function cleanModelOutput(text) {
  */
 export function sanitizeTextingOutput(text) {
     let out = String(text ?? '');
-    // stamp-prefix imitation: with every context message timestamped like
-    // "[Sun 8/23 1:03am]", models start replies the same way — strip those
-    // (per line, so burst paragraphs each lose their own stamp) or they'd
-    // reach Telegram and double-stamp when re-read as history
-    out = out.replace(/^[^\S\n]*\[(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s+\d{1,2}:\d{2}\s?(?:am|pm)\][^\S\n]*/gim, '');
+    // stamp imitation: with every context message timestamped like
+    // "[Sun 8/23 1:03am]", models copy the format — including MID-text after
+    // a {follow-up} marker when they write self-delimited chains. Stripped
+    // anywhere it appears, not just line starts.
+    out = out.replace(/\[(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s+\d{1,2}:\d{2}\s?(?:am|pm)\][^\S\n]*/gi, '');
     // bracketed meta lines, e.g. [Continue...], (OOC: ...)
     out = out.replace(/^\s*[\[(]\s*(continue|ooc|note|system|assistant)[^)\]]*[\])]\s*$/gim, '');
     // quote-style echo lines ("> what you said")
@@ -630,12 +630,18 @@ export function looksLikeSelfRepeat(text, ownTexts) {
 
 /**
  * The {follow-up} burst protocol: the model ends a text with {follow-up}
- * when it wants to send another text right away.
- * @returns {{ text: string, more: boolean }} text with the marker removed
+ * when it wants to send another text right away. Models sometimes sprinkle
+ * the marker MID-text (as a message delimiter in self-written chains) —
+ * every occurrence is removed, but only a TRAILING marker requests another
+ * text, so a model that already wrote a chain doesn't get extra bursts
+ * stacked on top.
+ * @returns {{ text: string, more: boolean }} text with all markers removed
  */
 export function extractFollowUpMarker(text) {
     const raw = String(text ?? '');
-    const m = raw.match(/\{\s*follow-?up\s*\}/i);
-    if (!m) return { text: raw.trim(), more: false };
-    return { text: raw.replace(m[0], '').trim(), more: true };
+    const RE = /\{\s*follow-?up\s*\}/gi;
+    if (!RE.test(raw)) return { text: raw.trim(), more: false };
+    const stripped = raw.replace(/\{\s*follow-?up\s*\}/gi, '').trim();
+    const trailing = /\{\s*follow-?up\s*\}\s*$/i.test(raw.trim());
+    return { text: stripped, more: trailing };
 }

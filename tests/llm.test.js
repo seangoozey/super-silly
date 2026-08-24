@@ -153,7 +153,9 @@ test('extractFollowUpMarker detects and strips the burst marker', async () => {
     const { extractFollowUpMarker } = await import('../plugin/src/llm.js');
     assert.deepEqual(extractFollowUpMarker('hey, guess what\n{follow-up}'), { text: 'hey, guess what', more: true });
     assert.deepEqual(extractFollowUpMarker('plain end'), { text: 'plain end', more: false });
-    assert.deepEqual(extractFollowUpMarker('{Follow-Up} one more thing'), { text: 'one more thing', more: true });
+    // a LEADING marker (model writes it then keeps going) is cleaned out but
+    // does not request another burst — only a trailing one does
+    assert.deepEqual(extractFollowUpMarker('{Follow-Up} one more thing'), { text: 'one more thing', more: false });
 });
 
 test('splitIntoTexts turns paragraphs into texting bursts', async () => {
@@ -329,4 +331,33 @@ test('timestamp-prefix imitation is stripped before delivery', async () => {
     );
     // legitimate bracketed text at line start that isn't a timestamp survives
     assert.equal(sanitizeTextingOutput('[sighs] long day'), '[sighs] long day');
+});
+
+test('self-written chains are defused: stamps anywhere stripped, mid-text markers removed, only trailing counts', async () => {
+    const { sanitizeTextingOutput, extractFollowUpMarker } = await import('../plugin/src/llm.js');
+
+    // the observed failure: model writes a transcript with stamps and markers
+    const chain = 'hey you {follow-up}[Sun 8/23 5:45pm] no not homework {follow-up}[Sun 8/23 5:45pm] it was so hard';
+    const cleaned = sanitizeTextingOutput(chain);
+    assert.ok(!/\[\w{3} \d/.test(cleaned), 'stamps stripped mid-text too');
+    const parsed = extractFollowUpMarker(cleaned);
+    assert.ok(!/\{follow-?up\}/i.test(parsed.text), 'every marker removed');
+    assert.equal(parsed.more, false, 'mid-text markers do NOT request another burst');
+
+    // a genuine trailing marker still means "more"
+    const t2 = extractFollowUpMarker('one more thing {follow-up}');
+    assert.equal(t2.more, true);
+    assert.equal(t2.text, 'one more thing');
+
+    // style section names the anti-transcript rules
+    const { promptSections } = await import('../plugin/src/llm.js');
+    const s = promptSections({
+        card: { data: { name: 'Hannah' } },
+        autolife: { timezone: 'UTC', behavior: { avg_message_length: 'short' } },
+        life: { activity: 'home', availability: 0.5, local: { hhmm12: '5:44pm', weekdayName: 'Sunday', dateShort: '8/23/26' } },
+        relationshipScore: 40,
+        userName: 'Sean',
+    });
+    assert.ok(/NEVER write one yourself/.test(s.style));
+    assert.ok(/never write multiple messages/.test(s.style));
 });
