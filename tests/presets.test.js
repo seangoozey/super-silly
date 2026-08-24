@@ -65,7 +65,7 @@ test('presetToSamplers maps textgen field names (and aliases), skips unsafe fiel
 
 test('listTextGenPresets reads the ST dir; loadPreset rejects traversal', () => {
     const dir = tmpUserDir();
-    const pdir = path.join(dir, 'textgeneration-settings');
+    const pdir = path.join(dir, 'TextGen Settings');
     fs.mkdirSync(pdir, { recursive: true });
     fs.writeFileSync(path.join(pdir, 'ReadyArt Qwen3.json'), JSON.stringify(READYART_PRESET));
     fs.writeFileSync(path.join(pdir, 'ignore.txt'), 'not a preset');
@@ -81,8 +81,8 @@ test('listTextGenPresets reads the ST dir; loadPreset rejects traversal', () => 
 test('engine applies the assigned preset as per-request samplers and audits it', async () => {
     const card = characterCard('Presetted');
     const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'preset-powered reply, brand new words' });
-    fs.mkdirSync(path.join(h.root, 'textgeneration-settings'), { recursive: true });
-    fs.writeFileSync(path.join(h.root, 'textgeneration-settings', 'Spicy.json'), JSON.stringify({ temp: 1.1, min_p: 0.05, nsigma: 1.5, xtc_probability: 0.4, xtc_threshold: 0.1 }));
+    fs.mkdirSync(path.join(h.root, 'TextGen Settings'), { recursive: true });
+    fs.writeFileSync(path.join(h.root, 'TextGen Settings', 'Spicy.json'), JSON.stringify({ temp: 1.1, min_p: 0.05, nsigma: 1.5, xtc_probability: 0.4, xtc_threshold: 0.1 }));
 
     const settings = h.store.loadSettings();
     settings.model.preset_by_model = { [settings.model.current]: 'Spicy' };
@@ -149,4 +149,23 @@ test('journal prompt demands diary-style thoughts, not message transcription', a
     // initiative directive now points at previous messages to break topic loops
     assert.ok(/NEVER bring up a topic or event you already texted/.test(DIRECTIVES.initiative('Sean')));
     assert.ok(/do not repeat what your earlier texts said/.test(DIRECTIVES.followup('Sean')));
+});
+
+test('presetsDir prefers the existing ST directory, either generation', async () => {
+    const { presetsDir, listTextGenPresets } = await import('../plugin/src/presets.js');
+    const dir = tmpUserDir();
+
+    // neither exists -> modern default
+    assert.equal(presetsDir(dir), path.join(dir, 'TextGen Settings'));
+
+    // modern dir wins when both exist
+    fs.mkdirSync(path.join(dir, 'TextGen Settings'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'textgeneration-settings'), { recursive: true });
+    assert.equal(presetsDir(dir), path.join(dir, 'TextGen Settings'));
+
+    // legacy-only install still reads
+    const legacy = tmpUserDir();
+    fs.mkdirSync(path.join(legacy, 'textgeneration-settings'), { recursive: true });
+    fs.writeFileSync(path.join(legacy, 'textgeneration-settings', 'Old.json'), '{"temp":0.5}');
+    assert.deepEqual(listTextGenPresets(legacy), ['Old']);
 });

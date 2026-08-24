@@ -92,6 +92,7 @@ COPY --from=st-build /st /home/node/app
 COPY plugin /autolife-seed/plugin
 COPY ui /autolife-seed/ui
 COPY cards/examples /autolife-seed/cards
+COPY presets /autolife-seed/presets
 COPY docker/seed /autolife-seed/seed
 COPY docker/entrypoint.sh /entrypoint.sh
 

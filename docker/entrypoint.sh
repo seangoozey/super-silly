@@ -34,6 +34,21 @@ if [ -z "$(ls -A "$APP/data/default-user/characters" 2>/dev/null)" ]; then
     cp "$SEED"/cards/*.png "$APP/data/default-user/characters/" 2>/dev/null || true
 fi
 
+# shipped sampler presets seed into ST's text-completion preset dir
+# ("TextGen Settings" in 1.18). No-clobber: user edits and imports win.
+if [ -d "$SEED/presets" ]; then
+    for PDIR in "TextGen Settings" "textgeneration-settings"; do
+        if [ -d "$APP/data/default-user/$PDIR" ]; then
+            cp -n "$SEED"/presets/*.json "$APP/data/default-user/$PDIR/" 2>/dev/null || true
+            break
+        fi
+    done
+    if [ ! -d "$APP/data/default-user/TextGen Settings" ] && [ ! -d "$APP/data/default-user/textgeneration-settings" ]; then
+        mkdir -p "$APP/data/default-user/TextGen Settings"
+        cp "$SEED"/presets/*.json "$APP/data/default-user/TextGen Settings/" 2>/dev/null || true
+    fi
+fi
+
 cd "$APP"
 log "running SillyTavern config init"
 node src/server-init.js

@@ -9,8 +9,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// ST 1.18 stores text-completion presets in "TextGen Settings" (constants.js);
+// older releases used "textgeneration-settings". Prefer whichever exists so
+// imports land in either generation.
+const PRESET_DIRS = ['TextGen Settings', 'textgeneration-settings'];
+
 export function presetsDir(userDir) {
-    return path.join(userDir, 'textgeneration-settings');
+    for (const d of PRESET_DIRS) {
+        if (fs.existsSync(path.join(userDir, d))) return path.join(userDir, d);
+    }
+    return path.join(userDir, PRESET_DIRS[0]);
 }
 
 /** Preset names (filenames minus .json). Empty when the dir doesn't exist. */
