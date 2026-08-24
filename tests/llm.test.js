@@ -361,3 +361,14 @@ test('self-written chains are defused: stamps anywhere stripped, mid-text marker
     assert.ok(/NEVER write one yourself/.test(s.style));
     assert.ok(/never write multiple messages/.test(s.style));
 });
+
+test('truncated trailing stamp fragments are stripped', async () => {
+    const { sanitizeTextingOutput } = await import('../plugin/src/llm.js');
+    // the observed artifact: token cap cut the model's self-written stamp
+    assert.equal(sanitizeTextingOutput('just got home [Sun 8/23 2'), 'just got home');
+    assert.equal(sanitizeTextingOutput('heading out now [Sun'), 'heading out now');
+    assert.equal(sanitizeTextingOutput('text [Sun 8/23 2:03pm'), 'text'); // complete time, missing ]
+    assert.equal(sanitizeTextingOutput('burst one [Sun 8/23 2\n\nburst two'), 'burst one\n\nburst two');
+    // bracketed weekday WORDS survive (not stamp fragments)
+    assert.equal(sanitizeTextingOutput('movie [Sunday plans'), 'movie [Sunday plans');
+});

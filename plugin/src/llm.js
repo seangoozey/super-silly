@@ -559,6 +559,11 @@ export function sanitizeTextingOutput(text) {
     // a {follow-up} marker when they write self-delimited chains. Stripped
     // anywhere it appears, not just line starts.
     out = out.replace(/\[(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s+\d{1,2}:\d{2}\s?(?:am|pm)\][^\S\n]*/gi, '');
+    // truncated stamp fragments: the model starts writing its own stamp and
+    // the token cap cuts it — "[Sun 8/23 2" and friends dangling at an end
+    // of line. Matches any prefix of the stamp format, anchored at EOL.
+    out = out.replace(/\[(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*(?:\s+\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?)?(?:\s+\d{1,2}(?::\d{2})?(?:\s?(?:a|p)m?)?)?)?[ \t]*$/gim, '');
+    out = out.replace(/[ \t]+$/gm, '');
     // bracketed meta lines, e.g. [Continue...], (OOC: ...)
     out = out.replace(/^\s*[\[(]\s*(continue|ooc|note|system|assistant)[^)\]]*[\])]\s*$/gim, '');
     // quote-style echo lines ("> what you said")
