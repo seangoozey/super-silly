@@ -194,7 +194,7 @@ function dashboardHtml() {
                     <div id="autolife_plog_feed" class="autolife-audit-feed"></div>
                 </div>
                 <div id="autolife_plog_viewer" style="display:none; position:fixed; inset:0; z-index:4000; background:rgba(0,0,0,0.6); overflow:auto; padding:24px;">
-                    <div style="max-width:900px; margin:0 auto; background:var(--SmartThemeBodyColor, #1c1c1e); border:1px solid var(--SmartThemeBorderColor, #666); border-radius:8px; padding:16px;">
+                    <div style="max-width:900px; margin:0 auto; background:var(--SmartThemeBlurTintColor, #1b1b1e); color:var(--SmartThemeBodyColor, #ddd); border:1px solid var(--SmartThemeBorderColor, #555); border-radius:8px; padding:16px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                             <b id="autolife_plog_viewer_title"></b>
                             <a class="autolife-btn" id="autolife_plog_viewer_close"><i class="fa-solid fa-xmark"></i> close</a>
