@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.13';
+const EXT_VERSION = '0.6.14';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -177,8 +177,9 @@ function dashboardHtml() {
                     <div id="autolife_audit_feed" class="autolife-audit-feed"></div>
                 </div>
 
-                <div class="autolife-section">
+                <div class="autolife-section" id="autolife_plog_section">
                     <h4>Prompt log <span class="autolife-muted">(debug repeats — full text)</span>
+                        <select id="autolife_plog_filter" style="font-size:0.85em; margin-left:8px;"></select>
                         <a class="autolife-btn" id="autolife_plog_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a>
                         <a class="autolife-btn" id="autolife_plog_purge" title="delete all entries"><i class="fa-solid fa-trash-can"></i></a>
                     </h4>
@@ -288,8 +289,15 @@ function dashboardHtml() {
     </div>`;
 }
 
-function openDashboard() {
+function openDashboard(opts = {}) {
     $('#autolife_dashboard').show();
+    if (opts.promptLogFor) {
+        // coming from a character's panel — show only her exchanges
+        state.plogFilter = opts.promptLogFor;
+        loadPromptLogSection().then(() => {
+            $('#autolife_plog_section')[0]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    }
 }
 
 function closeDashboard() {
@@ -341,6 +349,7 @@ function panelModalHtml() {
                         <button type="button" class="menu_button autolife-btn" id="autolife_panel_force"><i class="fa-solid fa-bolt"></i> Text me now</button>
                         <button type="button" class="menu_button autolife-btn" id="autolife_panel_pause">Pause</button>
                         <button type="button" class="menu_button autolife-btn" id="autolife_panel_stop">Stop</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_panel_plog"><i class="fa-solid fa-file-lines"></i> View prompts</button>
                         <button type="button" class="menu_button autolife-btn autolife-danger" id="autolife_panel_purge"><i class="fa-solid fa-trash-can"></i> Purge state</button>
                     </div>
                     <div class="autolife-muted">Pause: no replies, no initiative, resumes where it left off. Stop: Autolife off until re-enabled (ST instant replies return). Purge: wipes relationship, journal, pending replies and the memory index — chats and card are kept.</div>
@@ -745,7 +754,16 @@ async function loadPromptLogSection() {
         const r = await api('/promptlog?limit=200');
         $('#autolife_plog_enabled').prop('checked', !!r.enabled);
         $('#autolife_plog_keep').val(r.keep ?? 500);
-        const rows = (r.entries ?? []).map((e) => {
+        const all = r.entries ?? [];
+        // character filter (kept across reloads; set from a character's panel)
+        const chars = [...new Set(all.map((e) => e.character ?? '(engine)'))];
+        const current = state.plogFilter ?? '';
+        $('#autolife_plog_filter').html(['<option value="">(all characters)</option>']
+            .concat(chars.map((c) => `<option value="${escHtml(c)}" ${c === current ? 'selected' : ''}>${escHtml(c)}</option>`))
+            .join(''));
+        if (current && !chars.includes(current)) state.plogFilter = '';
+        const entries = all.filter((e) => !state.plogFilter || (e.character ?? '(engine)') === state.plogFilter);
+        const rows = entries.map((e) => {
             const when = new Date(e.ts).toLocaleTimeString();
             const tag = [e.character, e.kind, e.attempt].filter(Boolean).join(' · ');
             return `<div class="autolife-audit-row" data-plog-id="${escHtml(e.id)}" style="cursor:pointer;">
@@ -754,7 +772,7 @@ async function loadPromptLogSection() {
                 <span class="autolife-muted">${escHtml(e.responsePreview) || '(empty response)'}</span>
             </div>`;
         });
-        $('#autolife_plog_feed').html(rows.join('') || '<div class="autolife-muted">Nothing logged yet — enable capture, then generate.</div>');
+        $('#autolife_plog_feed').html(rows.join('') || `<div class="autolife-muted">Nothing logged${state.plogFilter ? ` for ${escHtml(state.plogFilter)}` : ' yet'} — enable capture, then generate.</div>`);
     } catch { /* plugin offline */ }
 }
 
@@ -1613,6 +1631,16 @@ function wireEvents() {
     $('#autolife_audit_refresh').on('click', loadAudit);
 
     $('#autolife_plog_refresh').on('click', loadPromptLogSection);
+    $('#autolife_plog_filter').on('change', (ev) => {
+        state.plogFilter = ev.target.value;
+        loadPromptLogSection();
+    });
+
+    // per-character panel: jump straight into her captured exchanges
+    $(document).on('click', '#autolife_panel_plog', () => {
+        if (!panelChar) return;
+        openDashboard({ promptLogFor: panelChar });
+    });
     $('#autolife_plog_save').on('click', async () => {
         try {
             await api('/settings', 'POST', {
