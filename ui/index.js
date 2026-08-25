@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.16';
+const EXT_VERSION = '0.6.17';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -1516,8 +1516,10 @@ function wireEvents() {
         if (!row.length || !panelChar) return;
         row.html(`
             <textarea class="autolife-journal-edit" rows="3" style="width:100%">${escHtml(row.attr('data-raw'))}</textarea>
-            <button type="button" class="menu_button autolife-btn" data-journal-save="${escHtml(ts)}">Save</button>
-            <button type="button" class="menu_button autolife-btn" data-journal-cancel="1">Cancel</button>`);
+            <div class="autolife-inline-actions">
+                <button type="button" class="menu_button autolife-btn" data-journal-save="${escHtml(ts)}">Save</button>
+                <button type="button" class="menu_button autolife-btn" data-journal-cancel="1">Cancel</button>
+            </div>`);
     });
 
     $(document).on('click', '[data-journal-save]', async (ev) => {

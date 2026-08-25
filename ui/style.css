@@ -60,6 +60,45 @@
     box-sizing: border-box;
 }
 
+/* Buttons flow horizontally with natural width instead of stacking as
+   narrow blocks (ST's .menu_button is display:block by default) */
+.autolife-section .menu_button {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    margin: 2px 6px 2px 0;
+}
+
+.autolife-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.autolife-inline-actions .menu_button {
+    margin: 0;
+}
+
+/* control cells: one flex row so inputs and buttons share the line and wrap */
+.autolife-form-grid > span {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.autolife-form-grid > span .menu_button {
+    flex: 0 0 auto;
+}
+
+.autolife-form-grid > span input[type="text"],
+.autolife-form-grid > span input[type="number"],
+.autolife-form-grid > span select {
+    flex: 1 1 110px;
+    min-width: 0;
+}
+
 .autolife-monitor-table {
     width: 100%;
     font-size: 0.82em;
