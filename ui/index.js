@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.14';
+const EXT_VERSION = '0.6.15';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -201,6 +201,25 @@ function dashboardHtml() {
                         </div>
                         <div id="autolife_plog_viewer_body"></div>
                     </div>
+                </div>
+
+                <div class="autolife-section">
+                    <h4>Internal directives <span class="autolife-muted">(the engine's per-turn instructions)</span></h4>
+                    <div class="autolife-form-grid">
+                        <label>Initiative <span class="autolife-muted">(she texts first)</span></label>
+                        <textarea id="autolife_dir_initiative" rows="3" style="width:100%" placeholder="(built-in default — leave empty to use it)"></textarea>
+                        <label>Follow-up <span class="autolife-muted">(nudge after no reply)</span></label>
+                        <textarea id="autolife_dir_followup" rows="3" style="width:100%" placeholder="(built-in default)"></textarea>
+                        <label>Catch-up <span class="autolife-muted">(answering a missed message)</span></label>
+                        <textarea id="autolife_dir_catchup" rows="3" style="width:100%" placeholder="(built-in default)"></textarea>
+                        <label>Burst <span class="autolife-muted">(double-texts / {follow-up} chains)</span></label>
+                        <textarea id="autolife_dir_burst" rows="3" style="width:100%" placeholder="(built-in default)"></textarea>
+                    </div>
+                    <div style="margin-top:6px;">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_dir_save">Save directives</button>
+                        <span id="autolife_dir_msg" class="autolife-muted"></span>
+                    </div>
+                    <div class="autolife-muted">Empty = the built-in wording. Custom text supports {{user}} and {{char}}. These ride as private instructions on every matching generation — visible verbatim in the prompt log.</div>
                 </div>
 
                 <div class="autolife-section">
@@ -1202,6 +1221,10 @@ async function loadTelegramSection() {
         $('#autolife_samplers_top_p').val(settings.model?.top_p ?? 1);
         $('#autolife_samplers_top_k').val(settings.model?.top_k ?? 0);
         $('#autolife_samplers_rep_pen').val(settings.model?.repeat_penalty ?? 1);
+        $('#autolife_dir_initiative').val(settings.directives?.initiative ?? '');
+        $('#autolife_dir_followup').val(settings.directives?.followup ?? '');
+        $('#autolife_dir_catchup').val(settings.directives?.catchup ?? '');
+        $('#autolife_dir_burst').val(settings.directives?.burst ?? '');
         $('#autolife_samplers_nsigma').val(settings.model?.top_n_sigma ?? 1.2);
         $('#autolife_samplers_xtc_p').val(settings.model?.xtc_probability ?? 0.33);
         $('#autolife_samplers_xtc_t').val(settings.model?.xtc_threshold ?? 0.05);
@@ -1564,6 +1587,21 @@ function wireEvents() {
             $('#autolife_prompt_global_msg').text('saved ✓');
         } catch (e) { $('#autolife_prompt_global_msg').text(e.message); }
         setTimeout(() => $('#autolife_prompt_global_msg').text(''), 4000);
+    });
+
+    $(document).on('click', '#autolife_dir_save', async () => {
+        try {
+            await api('/settings', 'POST', {
+                directives: {
+                    initiative: $('#autolife_dir_initiative').val(),
+                    followup: $('#autolife_dir_followup').val(),
+                    catchup: $('#autolife_dir_catchup').val(),
+                    burst: $('#autolife_dir_burst').val(),
+                },
+            });
+            $('#autolife_dir_msg').text('saved ✓');
+        } catch (e) { $('#autolife_dir_msg').text(e.message); }
+        setTimeout(() => $('#autolife_dir_msg').text(''), 4000);
     });
 
     $(document).on('click', '#autolife_prompt_card_save', () => saveCard());

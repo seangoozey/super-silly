@@ -372,3 +372,25 @@ test('truncated trailing stamp fragments are stripped', async () => {
     // bracketed weekday WORDS survive (not stamp fragments)
     assert.equal(sanitizeTextingOutput('movie [Sunday plans'), 'movie [Sunday plans');
 });
+
+test('directives: catch-up replies to content, bursts move on, overrides win', async () => {
+    const { DEFAULT_DIRECTIVES, buildDirective } = await import('../plugin/src/llm.js');
+
+    // catch-up default now demands a reply to what was said, not a narration
+    const catchup = DEFAULT_DIRECTIVES.catchup('Sean');
+    assert.ok(/Read what they actually SAID and reply to it/.test(catchup));
+    assert.ok(/Do NOT narrate that you missed it/.test(catchup));
+
+    // burst is kind-aware: after a catch-up it must be something NEW
+    const burstAfterCatchup = DEFAULT_DIRECTIVES.burst('Sean', 'catchup');
+    assert.ok(/never mention their missed message again/.test(burstAfterCatchup));
+    assert.ok(/something completely NEW/.test(burstAfterCatchup));
+    const burstPlain = DEFAULT_DIRECTIVES.burst('Sean', 'reply');
+    assert.ok(/just sent that text moments ago/.test(burstPlain));
+
+    // a custom override wins, with placeholder substitution
+    const custom = buildDirective('initiative', { initiative: 'hey {{user}}, this is {{char}} texting' }, 'Sean', { charName: 'Hannah' });
+    assert.equal(custom, 'hey Sean, this is Hannah texting');
+    // empty override falls back to the default
+    assert.equal(buildDirective('followup', { followup: '  ' }, 'Sean'), DEFAULT_DIRECTIVES.followup('Sean'));
+});

@@ -573,3 +573,25 @@ test('journal with no recent user messages says so instead of showing nothing', 
     assert.ok(/No messages from .* lately/.test(system), 'explicit no-messages fallback');
     assert.ok(!h.chatReqs.at(-1).messages.some((m) => m.role === 'assistant'));
 });
+
+test('custom directives ride on generations; burst uses the kind-aware directive', async () => {
+    const card = characterCard('Direct');
+    const h = buildHarness({
+        card,
+        rngValues: [0.99, 0.0, 0.99],
+        reply: ['custom directive initiative text, all fresh words {follow-up}', 'burst two, brand new content'],
+    });
+    const s = h.store.loadSettings();
+    s.directives = { ...s.directives, initiative: 'CUSTOM-INITIATIVE for {{user}}' };
+    h.store.saveSettings(s);
+    h.engine.refreshSettings();
+
+    await h.engine.force('Direct', 'initiative');
+    const first = h.chatReqs[0];
+    assert.ok(first.messages.some((m) => m.content.includes('CUSTOM-INITIATIVE for ')), 'override reached the request with {{user}} substituted');
+
+    // burst continuation after this initiative text carries the kind-aware directive
+    const burstReq = h.chatReqs.find((r) => r.logMeta?.attempt === 'burst-1');
+    assert.ok(burstReq, 'burst attempt logged');
+    assert.ok(burstReq.messages.some((m) => m.content.includes('just sent that text moments ago') && m.content.includes('never repeat anything from your previous texts')), 'burst directive carries anti-repeat wording');
+});

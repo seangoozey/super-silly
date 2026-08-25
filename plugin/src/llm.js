@@ -395,14 +395,37 @@ export function historyToOllama(history, characterName, userName, limit = 24, ti
         .filter((m) => m.content.trim().length > 0);
 }
 
-export const DIRECTIVES = {
+/**
+ * The engine's private per-turn directives. Overridable per install via
+ * settings.directives (dashboard → Internal directives); {{user}} and
+ * {{char}} placeholders are substituted in custom text.
+ */
+export const DEFAULT_DIRECTIVES = {
     initiative: (userName) =>
         `(Private direction, invisible to ${userName}: you decided to text ${userName} right now, unprompted. Send exactly ONE message. Make it feel caused by your day, the time, or something between you two. Look at your previous messages in the conversation: NEVER bring up a topic or event you already texted them about — find something new to say, or text about how you feel right now. Do not reference these directions.)`,
     followup: (userName) =>
         `(Private direction, invisible to ${userName}: you texted ${userName} earlier and they never replied. Send ONE more short message — a nudge, in character; casual, never needy; do not repeat what your earlier texts said. Do not reference these directions.)`,
     catchup: (userName) =>
-        `(Private direction, invisible to ${userName}: ${userName} sent you a message earlier that you never answered because you were busy or missed it. Now text them ONE message that acknowledges it — apologize or not, however you'd really do it. Do not reference these directions.)`,
+        `(Private direction, invisible to ${userName}: ${userName} sent you a message earlier that you never answered. Read what they actually SAID and reply to it — answer their question, respond to their words, pick the conversation back up as if you just saw it. Do NOT narrate that you missed it or explain why; at most a quick "sorry, just saw this". Send ONE message. Do not reference these directions.)`,
+    /** Kind-aware: after a catch-up/follow-up the model must move ON, not re-narrate. */
+    burst: (userName, kind) => (kind === 'catchup' || kind === 'followup')
+        ? `(Private direction, invisible to ${userName}: you already sent your ${kind === 'catchup' ? 'reply to their missed message' : 'nudge'} — look at your previous messages. Send ONE more SHORT text that is something completely NEW: never repeat anything you already said, never mention their missed message again, never apologize again. If you have nothing new to say, send nothing. End with {follow-up} ONLY if you genuinely have yet another NEW text; otherwise no marker. Do not reference these directions.)`
+        : `(Private direction, invisible to ${userName}: you just sent that text moments ago and naturally have more to say. Send exactly ONE more short text now — plain text only, never repeat anything from your previous texts. End with {follow-up} ONLY if you genuinely have yet another text after this one; otherwise no marker. Do not reference these directions.)`,
 };
+
+/**
+ * Effective directive for a kind: a non-empty override wins ({{user}}/{{char}}
+ * substituted), otherwise the built-in default.
+ */
+export function buildDirective(kind, overrides, userName, ctx = {}) {
+    const custom = overrides?.[kind];
+    if (typeof custom === 'string' && custom.trim()) {
+        return custom
+            .replaceAll('{{user}}', userName)
+            .replaceAll('{{char}}', String(ctx.charName ?? ''));
+    }
+    return DEFAULT_DIRECTIVES[kind]?.(userName, ctx.kind);
+}
 
 /**
  * Directive for a self-reflection ("how I've changed") note. Cool generation,
@@ -448,8 +471,7 @@ export function buildChatMessages(req) {
     const messages = [{ role: 'system', content: req.system }];
     messages.push(...historyToOllama(req.history, req.characterName, req.userName, 24, req.timeZone ?? null));
     if (req.memory) messages.push({ role: 'system', content: req.memory });
-    const directive = DIRECTIVES[req.kind];
-    if (directive) messages.push({ role: 'system', content: directive(req.userName) });
+    if (req.directive) messages.push({ role: 'system', content: req.directive });
     if (req.extra) messages.push({ role: 'system', content: req.extra });
     return messages;
 }

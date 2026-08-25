@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, buildDirective, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
 import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
@@ -660,6 +660,7 @@ export class Engine {
             characterName: entry.name,
             userName: this.chatStore.userName,
             kind,
+            directive: buildDirective(kind, this.settings.directives, this.chatStore.userName, { kind, charName: entry.name }),
             memory: memoryBlock,
             timeZone: entry.autolife.timezone,
             extra: [extra?.system, toneNote].filter(Boolean).join('\n') || undefined,
@@ -766,7 +767,7 @@ export class Engine {
                         model: usedModel,
                         messages: [...burstMessages, {
                             role: 'system',
-                            content: `(You just sent that text moments ago and naturally have more to say. Send exactly ONE more short text now — plain text only. End with {follow-up} ONLY if you genuinely have yet another text after this one; otherwise no marker.)`,
+                            content: buildDirective('burst', this.settings.directives, this.chatStore.userName, { kind, charName: entry.name }),
                         }],
                         numPredict: genNumPredict,
                     numCtx,

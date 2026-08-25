@@ -140,15 +140,15 @@ test('trimToCompleteSentence cuts mid-thought truncation', async () => {
 });
 
 test('journal prompt demands diary-style thoughts, not message transcription', async () => {
-    const { buildJournalPrompt, DIRECTIVES } = await import('../plugin/src/llm.js');
+    const { buildJournalPrompt, DEFAULT_DIRECTIVES } = await import('../plugin/src/llm.js');
     const p = buildJournalPrompt({ card: { data: { name: 'Hannah' } }, life: { activity: 'in her room', local: { hhmm: '23:10', weekdayName: 'Sunday' } }, userName: 'Sean' });
     assert.ok(/PRIVATE DIARY THOUGHTS/.test(p));
     assert.ok(/never transcribe, quote/.test(p));
     assert.ok(/do not retell events you already texted/.test(p));
     assert.ok(/complete \(subject and verb/.test(p));
     // initiative directive now points at previous messages to break topic loops
-    assert.ok(/NEVER bring up a topic or event you already texted/.test(DIRECTIVES.initiative('Sean')));
-    assert.ok(/do not repeat what your earlier texts said/.test(DIRECTIVES.followup('Sean')));
+    assert.ok(/NEVER bring up a topic or event you already texted/.test(DEFAULT_DIRECTIVES.initiative('Sean')));
+    assert.ok(/do not repeat what your earlier texts said/.test(DEFAULT_DIRECTIVES.followup('Sean')));
 });
 
 test('presetsDir prefers the existing ST directory, either generation', async () => {

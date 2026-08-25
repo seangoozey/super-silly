@@ -71,6 +71,14 @@ export function defaultSettings() {
             enabled: false,
             keep: 500, // auto-prune to the newest N entries
         },
+        // The engine's private per-turn instructions. Empty = built-in
+        // default; custom text supports {{user}} and {{char}} placeholders.
+        directives: {
+            initiative: '',
+            followup: '',
+            catchup: '',
+            burst: '',
+        },
         // Your sleep, not theirs: no engine-initiated texts inside this window,
         // due replies hold until it ends. Times in the given IANA timezone.
         quiet_hours: {
@@ -149,6 +157,7 @@ export class StateStore {
             quiet_hours: { ...base.quiet_hours, ...(saved.quiet_hours ?? {}) },
             features: { ...base.features, ...(saved.features ?? {}) },
             prompt_log: { ...base.prompt_log, ...(saved.prompt_log ?? {}) },
+            directives: { ...base.directives, ...(saved.directives ?? {}) },
             telegram: { ...base.telegram, ...(saved.telegram ?? {}) },
         };
         if (!merged.telegram.token && process.env.TELEGRAM_BOT_TOKEN) merged.telegram.token = process.env.TELEGRAM_BOT_TOKEN;

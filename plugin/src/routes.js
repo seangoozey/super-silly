@@ -228,6 +228,15 @@ export function registerRoutes(router, deps) {
                 audit(null, 'engine', `prompt logging ${body.prompt_log.enabled ? 'enabled' : 'disabled'}${body.prompt_log.enabled ? ' — every generation is saved to autolife/promptlog/' : ''}`);
             }
         }
+        if (body.directives) {
+            settings.directives = { ...settings.directives };
+            for (const k of ['initiative', 'followup', 'catchup', 'burst']) {
+                if (typeof body.directives[k] === 'string') {
+                    settings.directives[k] = body.directives[k].trim().slice(0, 1500);
+                }
+            }
+            audit(null, 'engine', 'internal directives updated (empty entries fall back to the built-in defaults)');
+        }
         if (body.quiet_hours) {
             settings.quiet_hours = { ...settings.quiet_hours, ...body.quiet_hours };
             audit(null, 'engine', `quiet hours ${settings.quiet_hours.enabled ? `enabled (${settings.quiet_hours.start}–${settings.quiet_hours.end} ${settings.quiet_hours.timezone})` : 'disabled'}`);
