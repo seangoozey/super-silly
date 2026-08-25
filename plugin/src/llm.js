@@ -470,7 +470,10 @@ export function buildMemoryContext(hits, userName, characterName, timeZone = nul
         const d = new Date(ts);
         return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     })());
-    const lines = hits.map((h) => `[${fmt(h.ts)}] ${h.role === 'user' ? userName : characterName}: ${String(h.text).slice(0, 300)}`);
+    // RAG returns similarity-ranked hits; a recalled conversation reads (and
+    // trains the model) far better in chronological order
+    const ordered = [...(hits ?? [])].sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    const lines = ordered.map((h) => `[${fmt(h.ts)}] ${h.role === 'user' ? userName : characterName}: ${String(h.text).slice(0, 300)}`);
     return `Texts from earlier in your history with ${userName} (your own memories of past exchanges — respond to them if relevant; NEVER quote, repeat, or recite them back):\n${lines.join('\n')}`;
 }
 
@@ -537,7 +540,8 @@ const LEAK_MARKER_STRINGS = [
     'Texts from earlier in your history with',          // buildMemoryContext header
     'Your recent private notes to yourself',            // journal section header
     "How you've changed since the above was written",   // evolve section header
-    '(Private direction, invisible to',                 // DIRECTIVES prefix
+    'private direction, invisible to',                  // DIRECTIVES prefix (paren-less: covers both shapes)
+    'instructions for your next message',               // the fold wrapper around trailing system blocks
 ];
 
 /**
@@ -557,7 +561,18 @@ export function stripLeakedScaffolding(text) {
         if (i >= 0 && (cutAt < 0 || i < cutAt)) cutAt = i;
     }
     if (cutAt < 0) return { text: raw, leaked: false };
-    return { text: raw.slice(0, cutAt).trim(), leaked: true };
+    // paren-less markers match just past an opening bracket the model wrote
+    // before the marker — drop that dangling '(' / '[' too
+    return { text: raw.slice(0, cutAt).replace(/[\s([]+$/, '').trim(), leaked: true };
+}
+
+/**
+ * Last-resort acceptance guard: any fragment of the engine's private
+ * instruction scaffolding in generated text is a leak, no matter how the
+ * model mangled the wording. Checked on main replies and burst pieces.
+ */
+export function looksLikeDirectiveLeak(text) {
+    return /private direction|instructions for your next message|follow them, never mention them|do not reference these directions/i.test(String(text ?? ''));
 }
 
 /** Clean up raw model output into something text-message shaped. */

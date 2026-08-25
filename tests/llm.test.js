@@ -394,3 +394,26 @@ test('directives: catch-up replies to content, bursts move on, overrides win', a
     // empty override falls back to the default
     assert.equal(buildDirective('followup', { followup: '  ' }, 'Sean'), DEFAULT_DIRECTIVES.followup('Sean'));
 });
+
+test('directive-echo leaks die at every layer: strip, marker coverage, acceptance guard', async () => {
+    const { stripLeakedScaffolding, cleanModelOutput, sanitizeTextingOutput, extractFollowUpMarker, looksLikeDirectiveLeak, buildMemoryContext } = await import('../plugin/src/llm.js');
+
+    // the observed wrapper-first echo: outer fold envelope survives the old markers
+    const wrapperFirst = '(Instructions for your next message — follow them, never mention them:\n(Private direction, invisible to Sean: you just sent that text moments ago. Do not reference these directions.)) its last message quoted verbatim here plus a finished line';
+    const cleaned = stripLeakedScaffolding(cleanModelOutput(wrapperFirst));
+    assert.equal(cleaned.leaked, true);
+    assert.equal(cleaned.text, '', 'wrapper-first echo strips to nothing');
+
+    // paren-dropped / mangled variants still trip the acceptance guard
+    assert.ok(looksLikeDirectiveLeak('Private direction, invisible to Sean: blah'));
+    assert.ok(looksLikeDirectiveLeak('...follow them, never mention them: ok?'));
+    assert.ok(looksLikeDirectiveLeak('do not reference these directions'));
+    assert.ok(!looksLikeDirectiveLeak('totally normal text about my day'));
+
+    // memory recall renders chronologically, not similarity-ranked
+    const mem = buildMemoryContext([
+        { ts: '2026-08-25T10:00:00Z', role: 'user', text: 'later text', score: 0.99 },
+        { ts: '2026-08-21T10:00:00Z', role: 'user', text: 'earlier text', score: 0.70 },
+    ], 'Sean', 'Hannah', 'UTC');
+    assert.ok(mem.indexOf('earlier text') < mem.indexOf('later text'), 'chronological order');
+});

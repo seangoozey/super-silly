@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, buildDirective, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, buildDirective, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, looksLikeDirectiveLeak, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
 import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
@@ -671,7 +671,9 @@ export class Engine {
         const antiEchoNudge = { role: 'system', content: `(That repeated ${this.chatStore.userName}'s own words back at them — forbidden. Write YOUR OWN new reply as ${entry.name}; do not quote, echo, or restate what was said to you.)` };
         const antiLeakNudge = { role: 'system', content: `(That output reproduced prompt scaffolding — system blocks, memory lists, or hidden instructions — which is strictly forbidden. Write only ${entry.name}'s own next text message, plain text, nothing else.)` };
         const antiRepeatNudge = { role: 'system', content: `(That resends messages you already sent earlier, word for word — forbidden. Write a brand-new text that moves the conversation forward; never repeat or recite your own earlier messages.)` };
-        const acceptable = (candidate) => (!looksLikeEcho(candidate, userTexts) && !looksLikeSelfRepeat(candidate, ownTexts)) ? candidate : null;
+        const acceptable = (candidate) => (!looksLikeEcho(candidate, userTexts)
+            && !looksLikeSelfRepeat(candidate, ownTexts)
+            && !looksLikeDirectiveLeak(candidate)) ? candidate : null;
 
         let text = '';
         let usedModel = null;
@@ -703,7 +705,7 @@ export class Engine {
                 const parsed = extractFollowUpMarker(cleaned.text);
                 text = sanitizeTextingOutput(parsed.text);
                 firstMore = parsed.more;
-                if (!text || looksLikeEcho(text, userTexts) || looksLikeSelfRepeat(text, ownTexts)) {
+                if (!text || looksLikeEcho(text, userTexts) || looksLikeSelfRepeat(text, ownTexts) || looksLikeDirectiveLeak(text)) {
                     // retry: empty/leaked output, an echo of the user's words,
                     // or a verbatim recitation of the character's own earlier texts
                     if (text && looksLikeSelfRepeat(text, ownTexts)) {
@@ -779,14 +781,17 @@ export class Engine {
                     const parsed = extractFollowUpMarker(cleanedNext.text);
                     const isEcho = looksLikeEcho(parsed.text, userTexts);
                     const isRepeat = !isEcho && looksLikeSelfRepeat(parsed.text, ownTexts);
-                    const piece = (isEcho || isRepeat)
+                    const isLeak = !isEcho && !isRepeat && looksLikeDirectiveLeak(parsed.text);
+                    const piece = (isEcho || isRepeat || isLeak)
                         ? null
                         : sanitizeTextingOutput(parsed.text).slice(0, 1500).trim();
                     if (cleanedNext.leaked) this.#audit(entry.name, 'leak_blocked', `stripped leaked prompt scaffolding from a follow-up text${piece ? '' : ' — nothing usable left, ending the burst'}`);
                     if (!piece) {
-                        if (parsed.text && !cleanedNext.leaked) this.#audit(entry.name, isRepeat ? 'repeat_blocked' : 'echo_blocked', isRepeat
-                            ? 'follow-up text rejected — it resent its own earlier words; ending the burst'
-                            : 'follow-up text rejected — it echoed the user\'s words; ending the burst');
+                        if (parsed.text && !cleanedNext.leaked) this.#audit(entry.name, isLeak ? 'leak_blocked' : isRepeat ? 'repeat_blocked' : 'echo_blocked', isLeak
+                            ? 'follow-up text rejected — it quoted the private instructions; ending the burst'
+                            : isRepeat
+                                ? 'follow-up text rejected — it resent its own earlier words; ending the burst'
+                                : 'follow-up text rejected — it echoed the user\'s words; ending the burst');
                         break;
                     }
                     texts.push(piece);
