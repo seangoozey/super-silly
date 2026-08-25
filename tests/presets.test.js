@@ -169,3 +169,29 @@ test('presetsDir prefers the existing ST directory, either generation', async ()
     fs.writeFileSync(path.join(legacy, 'textgeneration-settings', 'Old.json'), '{"temp":0.5}');
     assert.deepEqual(listTextGenPresets(legacy), ['Old']);
 });
+
+test('prompt-defaults route and defaultPromptTemplate expose the effective texts', async () => {
+    const { defaultPromptTemplate, DEFAULT_DIRECTIVES } = await import('../plugin/src/llm.js');
+    const t = defaultPromptTemplate();
+    for (const ph of ['{{card_system}}', '{{identity}}', '{{description}}', '{{personality}}', '{{scenario}}', '{{about_user}}', '{{evolve}}', '{{life}}', '{{relationship}}', '{{journal}}', '{{style}}', '{{post_history}}']) {
+        assert.ok(t.includes(ph), ph);
+    }
+    assert.ok(t.indexOf('{{card_system}}') < t.indexOf('{{style}}'), 'assembly order preserved');
+
+    const { registerRoutes } = await import('../plugin/src/routes.js');
+    const { characterCard, buildHarness } = await import('./helpers.js');
+    const h = buildHarness({ card: characterCard('Defaults') });
+    const router = { routes: [], get(p, hd) { this.routes.push(['GET', p, hd]); }, post(p, hd) { this.routes.push(['POST', p, hd]); } };
+    registerRoutes(router, {
+        engine: h.engine, store: h.store, cards: h.cards, chatStore: h.chatStore, ollama: h.ollama,
+        memory: h.memory, transport: { enabled: false, count: 0 }, charactersDir: h.cards.dir,
+        broadcast: () => {}, addSseClient: () => {}, restartTransport: () => {}, log: () => {}, userDir: h.root,
+    });
+    const res = { sc: 200, body: null, status(c) { this.sc = c; return this; }, json(o) { this.body = o; return this; } };
+    await router.routes.find(([m, p]) => m === 'GET' && p === '/prompt-defaults')[2]({ query: {} }, res);
+    assert.equal(res.sc, 200);
+    assert.ok(res.body.defaults.catchup.includes('Read what they actually SAID'), 'rendered default with real persona');
+    assert.ok(res.body.defaults.initiative.length > 50);
+    assert.ok(res.body.defaultTemplate.includes('{{identity}}'));
+    assert.deepEqual(res.body.current, h.store.loadSettings().directives);
+});

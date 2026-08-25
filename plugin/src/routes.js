@@ -4,6 +4,7 @@
 import { validateAutolife, normalizeAutolife } from './autolife-schema.js';
 import { saveAutolifeToCharacter } from './card-import.js';
 import { listTextGenPresets } from './presets.js';
+import { DEFAULT_DIRECTIVES, defaultPromptTemplate } from './llm.js';
 
 function readBody(req) {
     // SillyTavern's global express.json middleware may already have consumed
@@ -182,6 +183,23 @@ export function registerRoutes(router, deps) {
     }));
 
     // ---- settings ----
+    // ---- effective prompt texts (editors show what is actually sent) ----
+    router.get('/prompt-defaults', wrap(async (req, res) => {
+        const settings = store.loadSettings();
+        const u = chatStore.userName ?? 'User';
+        res.json({
+            defaults: {
+                initiative: DEFAULT_DIRECTIVES.initiative(u),
+                followup: DEFAULT_DIRECTIVES.followup(u),
+                catchup: DEFAULT_DIRECTIVES.catchup(u),
+                burst: DEFAULT_DIRECTIVES.burst(u),
+            },
+            current: settings.directives ?? {},
+            defaultTemplate: defaultPromptTemplate(),
+            currentTemplate: settings.prompt?.template ?? '',
+        });
+    }));
+
     router.get('/settings', wrap(async (req, res) => {
         const settings = store.loadSettings();
         const token = settings.telegram?.token ?? '';

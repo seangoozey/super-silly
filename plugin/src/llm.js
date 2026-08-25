@@ -428,6 +428,19 @@ export function buildDirective(kind, overrides, userName, ctx = {}) {
 }
 
 /**
+ * The built-in prompt assembly expressed as a template — what an empty global
+ * template setting actually produces. Shown in the editor as the effective
+ * content and used to detect "saved unchanged default".
+ */
+export function defaultPromptTemplate() {
+    return [
+        '{{card_system}}', '{{identity}}', '{{description}}', '{{personality}}',
+        '{{scenario}}', '{{about_user}}', '{{evolve}}', '{{life}}', '{{relationship}}',
+        '{{journal}}', '{{style}}', '{{post_history}}',
+    ].join('\n\n');
+}
+
+/**
  * Directive for a self-reflection ("how I've changed") note. Cool generation,
  * grounded in journal + actual messages, hard-clamped against redefining core
  * personality.

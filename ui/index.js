@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.15';
+const EXT_VERSION = '0.6.16';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -217,17 +217,19 @@ function dashboardHtml() {
                     </div>
                     <div style="margin-top:6px;">
                         <button type="button" class="menu_button autolife-btn" id="autolife_dir_save">Save directives</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_dir_restore">Restore defaults</button>
                         <span id="autolife_dir_msg" class="autolife-muted"></span>
                     </div>
-                    <div class="autolife-muted">Empty = the built-in wording. Custom text supports {{user}} and {{char}}. These ride as private instructions on every matching generation — visible verbatim in the prompt log.</div>
+                    <div class="autolife-muted">The boxes always show what is currently sent. Saving the built-in wording unchanged keeps you linked to it (future default improvements apply); custom text supports {{user}} and {{char}}. Everything is visible verbatim in the prompt log.</div>
                 </div>
 
                 <div class="autolife-section">
                     <h4>Prompt template <span class="autolife-muted">(global default)</span></h4>
-                    <div class="autolife-muted">Applies to every character; a character's own template (Autolife panel → Prompt) overrides it. Empty = built-in assembly. Placeholders: {{card_system}} {{identity}} {{description}} {{personality}} {{scenario}} {{life}} {{relationship}} {{journal}} {{style}} {{post_history}} {{time}} {{weekday}} {{activity}} {{char}} {{user}}.</div>
-                    <textarea id="autolife_prompt_global" rows="4" style="width:100%; margin-top:4px;" placeholder="empty — built-in assembly"></textarea>
+                    <div class="autolife-muted">Applies to every character; a character's own template (Autolife panel → Prompt) overrides it. The box shows the current effective template; saving the built-in assembly unchanged keeps you linked to it. Placeholders: {{card_system}} {{identity}} {{description}} {{personality}} {{scenario}} {{about_user}} {{evolve}} {{life}} {{relationship}} {{journal}} {{style}} {{post_history}} {{time}} {{weekday}} {{activity}} {{char}} {{user}}.</div>
+                    <textarea id="autolife_prompt_global" rows="6" style="width:100%; margin-top:4px;" placeholder="built-in assembly"></textarea>
                     <div style="margin-top:4px;">
                         <button type="button" class="menu_button autolife-btn" id="autolife_prompt_global_save">Save template</button>
+                        <button type="button" class="menu_button autolife-btn" id="autolife_prompt_global_restore">Restore defaults</button>
                         <span id="autolife_prompt_global_msg" class="autolife-muted"></span>
                     </div>
                 </div>
@@ -764,6 +766,21 @@ async function loadAudit() {
     } catch { /* plugin offline */ }
 }
 
+/** Prompt editors always show the EFFECTIVE text — custom or built-in. */
+async function loadPromptEditors() {
+    try {
+        const r = await api('/prompt-defaults');
+        state.promptDefaults = r.defaults ?? {};
+        state.defaultTemplate = r.defaultTemplate ?? '';
+        const cur = r.current ?? {};
+        $('#autolife_dir_initiative').val(cur.initiative || r.defaults.initiative || '');
+        $('#autolife_dir_followup').val(cur.followup || r.defaults.followup || '');
+        $('#autolife_dir_catchup').val(cur.catchup || r.defaults.catchup || '');
+        $('#autolife_dir_burst').val(cur.burst || r.defaults.burst || '');
+        $('#autolife_prompt_global').val(r.currentTemplate || r.defaultTemplate || '');
+    } catch { /* plugin offline */ }
+}
+
 // ---------------------------------------------------------------- prompt log
 
 const escHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1221,14 +1238,10 @@ async function loadTelegramSection() {
         $('#autolife_samplers_top_p').val(settings.model?.top_p ?? 1);
         $('#autolife_samplers_top_k').val(settings.model?.top_k ?? 0);
         $('#autolife_samplers_rep_pen').val(settings.model?.repeat_penalty ?? 1);
-        $('#autolife_dir_initiative').val(settings.directives?.initiative ?? '');
-        $('#autolife_dir_followup').val(settings.directives?.followup ?? '');
-        $('#autolife_dir_catchup').val(settings.directives?.catchup ?? '');
-        $('#autolife_dir_burst').val(settings.directives?.burst ?? '');
         $('#autolife_samplers_nsigma').val(settings.model?.top_n_sigma ?? 1.2);
         $('#autolife_samplers_xtc_p').val(settings.model?.xtc_probability ?? 0.33);
         $('#autolife_samplers_xtc_t').val(settings.model?.xtc_threshold ?? 0.05);
-        $('#autolife_prompt_global').val(settings.prompt?.template ?? '');
+        loadPromptEditors();
         $('#autolife_availability_tone').prop('checked', settings.engine?.availability_tone !== false);
         $('#autolife_relationship_speed').prop('checked', settings.engine?.relationship_speed !== false);
         $('#autolife_feature_memory').prop('checked', settings.features?.memory !== false);
@@ -1583,23 +1596,51 @@ function wireEvents() {
     // --- prompt templates ---
     $(document).on('click', '#autolife_prompt_global_save', async () => {
         try {
-            await api('/settings', 'POST', { prompt: { template: $('#autolife_prompt_global').val() } });
+            const v = String($('#autolife_prompt_global').val() ?? '').trim();
+            const template = state.defaultTemplate && v === state.defaultTemplate.trim() ? '' : $('#autolife_prompt_global').val();
+            await api('/settings', 'POST', { prompt: { template } });
             $('#autolife_prompt_global_msg').text('saved ✓');
+            loadPromptEditors();
+        } catch (e) { $('#autolife_prompt_global_msg').text(e.message); }
+        setTimeout(() => $('#autolife_prompt_global_msg').text(''), 4000);
+    });
+
+    $(document).on('click', '#autolife_prompt_global_restore', async () => {
+        try {
+            await api('/settings', 'POST', { prompt: { template: '' } });
+            $('#autolife_prompt_global_msg').text('restored to built-in assembly ✓');
+            loadPromptEditors();
         } catch (e) { $('#autolife_prompt_global_msg').text(e.message); }
         setTimeout(() => $('#autolife_prompt_global_msg').text(''), 4000);
     });
 
     $(document).on('click', '#autolife_dir_save', async () => {
         try {
+            const d = state.promptDefaults ?? {};
+            // saving the built-in wording unchanged stays linked to it
+            const val = (sel, key) => {
+                const v = String($(sel).val() ?? '').trim();
+                return v && d[key] && v === String(d[key]).trim() ? '' : $(sel).val();
+            };
             await api('/settings', 'POST', {
                 directives: {
-                    initiative: $('#autolife_dir_initiative').val(),
-                    followup: $('#autolife_dir_followup').val(),
-                    catchup: $('#autolife_dir_catchup').val(),
-                    burst: $('#autolife_dir_burst').val(),
+                    initiative: val('#autolife_dir_initiative', 'initiative'),
+                    followup: val('#autolife_dir_followup', 'followup'),
+                    catchup: val('#autolife_dir_catchup', 'catchup'),
+                    burst: val('#autolife_dir_burst', 'burst'),
                 },
             });
             $('#autolife_dir_msg').text('saved ✓');
+            loadPromptEditors();
+        } catch (e) { $('#autolife_dir_msg').text(e.message); }
+        setTimeout(() => $('#autolife_dir_msg').text(''), 4000);
+    });
+
+    $(document).on('click', '#autolife_dir_restore', async () => {
+        try {
+            await api('/settings', 'POST', { directives: { initiative: '', followup: '', catchup: '', burst: '' } });
+            $('#autolife_dir_msg').text('restored to built-in wording ✓');
+            loadPromptEditors();
         } catch (e) { $('#autolife_dir_msg').text(e.message); }
         setTimeout(() => $('#autolife_dir_msg').text(''), 4000);
     });
