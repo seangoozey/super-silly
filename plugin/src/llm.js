@@ -323,7 +323,8 @@ export function promptSections(ctx) {
     const sections = {};
 
     sections.cardSystem = data.system_prompt?.trim() ? sub(data.system_prompt) : null;
-    sections.identity = `You are ${name}, a real person texting with ${ctx.userName} on a phone. You are NOT an AI; never break character, never mention being a model or a simulation.`;
+    sections.identity = `You are ${name}, a real person texting with ${ctx.userName} on a phone. You are NOT an AI; never break character, never mention being a model or a simulation.`
+        + ` The messages below are your actual text-message history with ${ctx.userName}: your texts appear as the assistant's messages, ${ctx.userName}'s as the user's — write your next text exactly as you would type it.`;
     sections.description = data.description?.trim() ? `Who you are: ${sub(data.description)}` : null;
     sections.personality = data.personality?.trim() ? `Personality: ${sub(data.personality)}` : null;
     sections.scenario = data.scenario?.trim() ? `Situation between you two: ${sub(data.scenario)}` : null;
@@ -349,7 +350,10 @@ export function promptSections(ctx) {
 
     sections.style = `How you text: ${LENGTH_DIRECTIVE[a.behavior?.avg_message_length ?? 'short']} Match the tone and style of your previous messages. Write only the message text itself — no narration, no asterisk actions, no quotation marks around the message. Never quote, repeat, or echo ${ctx.userName}'s words back to them — always write your own new words.`
         + ' Messages in the conversation are prefixed with local timestamps like [Sun 8/23 1:03am] — those are added by the system, NEVER write one yourself. The last timestamp is the present moment; reason from them about how much time has passed (something agreed for "tomorrow" means the NEXT day, not now).'
-        + ' You are writing ONE text message, not a story or a chat log: never write multiple messages, message numbering, or a chain of texts — if you genuinely have more to say right away, end with {follow-up} as the very last thing and write nothing after it.';
+        + ' You are writing ONE text message, not a story or a chat log: never write multiple messages, message numbering, or a chain of texts.'
+        + (ctx.bursts
+            ? ' If you genuinely have more to say right away, end with {follow-up} as the very last thing and write nothing after it.'
+            : '');
     sections.postHistory = data.post_history_instructions?.trim() ? `Additional standing instructions: ${sub(data.post_history_instructions)}` : null;
 
     return sections;

@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.17';
+const EXT_VERSION = '0.6.18';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -144,6 +144,8 @@ function dashboardHtml() {
                         <input type="checkbox" id="autolife_availability_tone" checked>
                         <label>Relationship speeds replies</label>
                         <input type="checkbox" id="autolife_relationship_speed" checked>
+                        <label>Follow-up bursts ({follow-up} double-texts)</label>
+                        <input type="checkbox" id="autolife_engine_bursts">
                         <label>Memory RAG (global)</label>
                         <input type="checkbox" id="autolife_feature_memory" checked>
                         <label>Journal (global)</label>
@@ -1244,6 +1246,7 @@ async function loadTelegramSection() {
         loadPromptEditors();
         $('#autolife_availability_tone').prop('checked', settings.engine?.availability_tone !== false);
         $('#autolife_relationship_speed').prop('checked', settings.engine?.relationship_speed !== false);
+        $('#autolife_engine_bursts').prop('checked', settings.engine?.followup_bursts === true);
         $('#autolife_feature_memory').prop('checked', settings.features?.memory !== false);
         $('#autolife_feature_journal').prop('checked', settings.features?.journal !== false);
         $('#autolife_feature_evolve').prop('checked', settings.features?.evolve !== false);
@@ -1774,6 +1777,7 @@ function wireEvents() {
                 engine: {
                     availability_tone: $('#autolife_availability_tone').prop('checked'),
                     relationship_speed: $('#autolife_relationship_speed').prop('checked'),
+                    followup_bursts: $('#autolife_engine_bursts').prop('checked'),
                 },
                 features: {
                     memory: $('#autolife_feature_memory').prop('checked'),

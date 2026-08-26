@@ -57,6 +57,9 @@ export function defaultSettings() {
             // Close relationships reply faster (delay scaled 0.5x at rel 100,
             // 1.5x at rel 0).
             relationship_speed: true,
+            // {follow-up} burst protocol — OFF by default: the marker rarely
+            // produced genuinely new information in practice.
+            followup_bursts: false,
         },
         // Global feature kill-switches (independent of per-card settings):
         // flip these to disable a subsystem everywhere without touching cards.

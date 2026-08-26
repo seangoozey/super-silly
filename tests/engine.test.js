@@ -271,10 +271,14 @@ test('AUTOLIFE_START_STOPPED env overrides the boot policy', async () => {
     }
 });
 
-test('bursts: {follow-up} marker produces multiple texts and chat messages', async () => {
+test('bursts: {follow-up} marker produces multiple texts and chat messages (opt-in)', async () => {
     const card = characterCard('Bursty');
     const replies = ['hey, guess what {follow-up}', 'i got the job!!'];
     const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: replies });
+    const s0 = h.store.loadSettings();
+    s0.engine = { ...s0.engine, followup_bursts: true };
+    h.store.saveSettings(s0);
+    h.engine.refreshSettings();
     await h.engine.onInbound({ character: 'Bursty', mes: '??', source: 'telegram' });
 
     const state = stateOf(h.store, 'Bursty');
@@ -330,9 +334,9 @@ test('verbatim self-recitation is rejected and regenerated, not delivered twice'
     const first = 'just got home from the studio, what are you up to tonight?';
     // second inbound: the model resends the earlier text word-for-word, then
     // produces something new on the retry
-    // rng order per inbound: ignore-roll, quick-roll, then a burst probe roll
-    // after a successful generation — so the second inbound starts at value 4
-    const h = buildHarness({ card, rngValues: [0.99, 0.0, 0.99, 0.99, 0.0], reply: [first, first, 'wait, movie night instead? i am picking the film'] });
+    // rng order per inbound: ignore-roll, quick-roll (bursts are off by
+    // default now, so no probe roll) — the second inbound starts at value 3
+    const h = buildHarness({ card, rngValues: [0.99, 0.0, 0.99, 0.0], reply: [first, first, 'wait, movie night instead? i am picking the film'] });
     await h.engine.onInbound({ character: 'Repeaty', mes: 'hey you', source: 'telegram' });
     await h.engine.onInbound({ character: 'Repeaty', mes: 'still there?', source: 'telegram' });
 
@@ -582,6 +586,7 @@ test('custom directives ride on generations; burst uses the kind-aware directive
         reply: ['custom directive initiative text, all fresh words {follow-up}', 'burst two, brand new content'],
     });
     const s = h.store.loadSettings();
+    s.engine = { ...s.engine, followup_bursts: true };
     s.directives = { ...s.directives, initiative: 'CUSTOM-INITIATIVE for {{user}}' };
     h.store.saveSettings(s);
     h.engine.refreshSettings();
@@ -594,4 +599,15 @@ test('custom directives ride on generations; burst uses the kind-aware directive
     const burstReq = h.chatReqs.find((r) => r.logMeta?.attempt === 'burst-1');
     assert.ok(burstReq, 'burst attempt logged');
     assert.ok(burstReq.messages.some((m) => m.content.includes('just sent that text moments ago') && m.content.includes('never repeat anything from your previous texts')), 'burst directive carries anti-repeat wording');
+});
+
+test('follow-up bursts are OFF by default: markers ignored, no burst generations', async () => {
+    const card = characterCard('NoBurst');
+    const h = buildHarness({ card, rngValues: [0.99, 0.0, 0.0], reply: 'one fresh main text {follow-up}' });
+    await h.engine.onInbound({ character: 'NoBurst', mes: 'you around?', source: 'telegram' });
+    const attempts = h.chatReqs.map((r) => r.logMeta?.attempt).filter(Boolean);
+    assert.deepEqual(attempts.filter((a) => a?.startsWith('burst')), [], 'no burst generations by default');
+    const state = stateOf(h.store, 'NoBurst');
+    const msgs = h.chatStore.readMessages('NoBurst', state.chatFile).filter((m) => !m.is_user);
+    assert.ok(!msgs.some((m) => /\{follow-?up\}/i.test(m.mes)), 'marker stripped from the stored text');
 });

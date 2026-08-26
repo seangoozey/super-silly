@@ -626,6 +626,7 @@ export class Engine {
         }
 
         const ctxTemplate = entry.autolife.prompt?.template?.trim() || this.settings.prompt?.template?.trim() || null;
+        const burstsEnabled = this.settings.engine?.followup_bursts === true;
         const system = buildSystemPrompt({
             card: entry.card,
             autolife: entry.autolife,
@@ -634,6 +635,7 @@ export class Engine {
             journal: state.journal,
             userName: this.chatStore.userName,
             template: ctxTemplate,
+            bursts: burstsEnabled,
             evolveNotes: (state.evolve?.notes ?? []).filter((n) => n.status === 'approved'),
         });
 
@@ -654,16 +656,23 @@ export class Engine {
             }
         }
         const candidates = [...new Set([this.settings.model?.current, this.settings.model?.fallback].filter(Boolean))];
+        // one instruction block, not several: the turn directive carries the
+        // gap note and availability tone inline (the memory block stays
+        // separate — it is content about the past, not instructions)
+        const instruction = [
+            buildDirective(kind, this.settings.directives, this.chatStore.userName, { kind, charName: entry.name }),
+            extra?.system,
+            toneNote,
+        ].filter(Boolean).join('\n');
         const messages = buildChatMessages({
             system,
             history,
             characterName: entry.name,
             userName: this.chatStore.userName,
             kind,
-            directive: buildDirective(kind, this.settings.directives, this.chatStore.userName, { kind, charName: entry.name }),
+            directive: instruction || undefined,
             memory: memoryBlock,
             timeZone: entry.autolife.timezone,
-            extra: [extra?.system, toneNote].filter(Boolean).join('\n') || undefined,
         });
 
         const userTexts = history.filter((m) => m.is_user).map((m) => String(m.mes ?? ''));
@@ -756,11 +765,13 @@ export class Engine {
             return false;
         }
 
-        // {follow-up} burst protocol: the model may mark a text to signal it
-        // wants to send another one right away (a real person's double-text).
-        // Falls out of the loop's `parsed.more` via firstMore below.
+        // {follow-up} burst protocol — OFF by default: in practice the marker
+        // rarely produced genuinely new information (mostly restated the same
+        // text or invented apropos-of-nothing follow-ups after empty mains),
+        // while adding a whole extra instruction block to every request.
+        // Multi-paragraph replies still become multiple paced texts.
         const texts = [text.slice(0, 1500).trim()];
-        const probe = firstMore || this.rng.float() < 0.25; // model signalled, or engine-side chance
+        const probe = burstsEnabled && (firstMore || this.rng.float() < 0.25);
         if (probe) {
             let burstMessages = [...messages, { role: 'assistant', content: texts[0] }];
             for (let i = 0; i < 2; i++) {
