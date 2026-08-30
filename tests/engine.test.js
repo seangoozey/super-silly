@@ -96,6 +96,10 @@ test('initiative: fires when enabled, respects max_per_day and sleep', async () 
     const card = characterCard('Rico', { initiative: { enabled: true, min_gap_minutes: 60, max_per_day: 1, followup_on_unread_hours: 0 } });
     const start = new Date(Date.UTC(2026, 0, 15, 12, 0)); // free time
     const h = buildHarness({ card, now: start, rngValues: [0.0] }); // initiative roll passes
+    // she has material: a fresh journal thought (the gate demands something to say)
+    const st0 = stateOf(h.store, 'Rico');
+    st0.lastJournalAt = new Date(start.getTime() - 60_000).toISOString();
+    h.store.saveState(st0);
 
     await h.engine.tick(start);
     let state = stateOf(h.store, 'Rico');
@@ -610,4 +614,84 @@ test('follow-up bursts are OFF by default: markers ignored, no burst generations
     const state = stateOf(h.store, 'NoBurst');
     const msgs = h.chatStore.readMessages('NoBurst', state.chatFile).filter((m) => !m.is_user);
     assert.ok(!msgs.some((m) => /\{follow-?up\}/i.test(m.mes)), 'marker stripped from the stored text');
+});
+
+test('initiative is blocked when she has nothing to say (material gate)', async () => {
+    const card = characterCard('Idle', { initiative: { enabled: true, min_gap_minutes: 60, max_per_day: 5, followup_on_unread_hours: 0 } });
+    const start = new Date(Date.UTC(2026, 0, 15, 12, 0));
+    const h = buildHarness({ card, now: start, rngValues: [0.5, 0.5, 0.0, 0.5, 0.5] }); // initiative roll fires on tick 2; journal/happening skip
+    await h.engine.tick(start);
+
+    const state = stateOf(h.store, 'Idle');
+    assert.equal(h.delivered.length, 0, 'no initiative without material');
+    assert.ok(h.store.readAudit('Idle', 20).some((a) => /nothing new to say/.test(a.text)),
+        'the block reason names the missing material');
+
+    // a fresh journal thought unlocks it
+    state.lastJournalAt = new Date(start.getTime() - 30_000).toISOString();
+    h.store.saveState(state);
+    await h.engine.tick(start);
+    assert.equal(h.delivered.length, 1, 'initiative fires once she has a fresh thought');
+});
+
+test('greeting spiral: two bare pings into silence back initiative off', async () => {
+    const card = characterCard('Spiral', { initiative: { enabled: true, min_gap_minutes: 1, max_per_day: 10, followup_on_unread_hours: 0 } });
+    let t = new Date(Date.UTC(2026, 0, 15, 12, 0));
+    // per tick: [initiative roll, journal skip, happening skip]
+    const h = buildHarness({ card, now: t, rngValues: [0.0, 0.5, 0.5, 0.0, 0.5, 0.5, 0.5, 0.5], reply: 'hey you' });
+    // material: a fresh journal before each initiative
+    let st = stateOf(h.store, 'Spiral');
+    st.lastJournalAt = new Date(t.getTime() - 30_000).toISOString();
+    h.store.saveState(st);
+    await h.engine.tick(t);
+    console.log('DEBUG audits:', h.store.readAudit('Spiral', 20).map((a) => a.kind).join(','));
+    console.log('DEBUG delivered:', JSON.stringify(h.delivered));
+    assert.equal(h.delivered.length, 1, 'first bare initiative fires');
+    st = stateOf(h.store, 'Spiral');
+    assert.equal(st.greetingRun, 1);
+
+    // two hours later, another fresh journal, another bare ping
+    t = new Date(t.getTime() + 2 * 3600_000);
+    h.clock.now = t;
+    st.lastJournalAt = new Date(t.getTime() - 30_000).toISOString();
+    h.store.saveState(st);
+    h.engine.rng = makeRng([0.0]);
+    await h.engine.tick(t);
+    st = stateOf(h.store, 'Spiral');
+    assert.equal(st.greetingRun, 2);
+    assert.ok(st.greetingBackoffUntil, 'backoff armed after two bare greetings');
+    assert.ok(h.store.readAudit('Spiral', 30).some((a) => a.kind === 'initiative_blocked' && /bare greetings/.test(a.text)));
+
+    // a third initiative with material is now held by the backoff
+    t = new Date(t.getTime() + 2 * 3600_000);
+    h.clock.now = t;
+    st.lastJournalAt = new Date(t.getTime() - 30_000).toISOString();
+    h.store.saveState(st);
+    h.engine.rng = makeRng([0.0]);
+    await h.engine.tick(t);
+    assert.equal(h.delivered.length, 2, 'backoff holds the third initiative');
+    assert.ok(h.store.readAudit('Spiral', 30).some((a) => /backing off after bare/.test(a.text)));
+});
+
+test('happenings: invented everyday events supply initiative material and get consumed', async () => {
+    const card = characterCard('Lived', { initiative: { enabled: true, min_gap_minutes: 1, max_per_day: 10, followup_on_unread_hours: 0 } });
+    const h = buildHarness({ card, rngValues: [0.0, 0.5, 0.5], reply: 'you will not BELIEVE what the vending machine just did to me' });
+    const text = await h.engine.happeningNow('Lived');
+    assert.ok(text && text.length > 5, 'a happening was generated');
+    assert.ok(h.chatReqs.at(-1).messages.some((m) => m.content.includes('small, mundane thing')), 'happening prompt requests an everyday event');
+    assert.ok(h.chatReqs.at(-1).messages.some((m) => m.content.includes('must NOT involve')), 'happenings never involve the user');
+
+    let st = stateOf(h.store, 'Lived');
+    assert.equal(st.happenings.filter((x) => !x.used).length, 1, 'stored unused');
+
+    // the next initiative carries it in the instruction and consumes it
+    const start = new Date(Date.UTC(2026, 0, 15, 12, 0));
+    h.clock.now = start;
+    st.lastJournalAt = new Date(start.getTime() - 30_000).toISOString();
+    h.store.saveState(st);
+    await h.engine.tick(start);
+    const initReq = h.chatReqs.find((r) => r.logMeta?.kind === 'initiative');
+    assert.ok(initReq.messages.some((m) => m.content.includes('something small happened to you recently')), 'happening offered as material');
+    st = stateOf(h.store, 'Lived');
+    assert.equal(st.happenings.filter((x) => !x.used).length, 0, 'consumed after a content initiative');
 });

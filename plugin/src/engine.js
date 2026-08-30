@@ -4,7 +4,7 @@
 // pushing them to bound transports (Telegram).
 
 import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, promptSections, historyToOllama, buildMemoryContext, buildDirective, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, looksLikeDirectiveLeak, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, buildHappeningPrompt, promptSections, historyToOllama, buildMemoryContext, buildDirective, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, looksLikeDirectiveLeak, isBareGreeting, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
 import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
@@ -325,6 +325,7 @@ export class Engine {
         const userRepliedToInitiative = state.lastInitiativeAt && (!state.lastUserMessageAt || new Date(state.lastInitiativeAt) > new Date(state.lastUserMessageAt));
 
         state.lastUserMessageAt = now.toISOString();
+        state.greetingRun = 0; // you replied — the spiral is over
         state.lastContactAt = now.toISOString();
         state.followupDone = false;
 
@@ -531,14 +532,23 @@ export class Engine {
             await this.#generate(entry, state, 'catchup', now);
         }
 
-        // 3. proactive initiative (never during your quiet hours)
+        // 3. proactive initiative (never during your quiet hours) — and only
+        // when she has something to say: a fresh journal thought, something
+        // new from you, or a noted happening. Without material she texts
+        // bare "hey" greetings into the void (the greeting spiral).
         if (!quietHold && init.enabled && !life.isAsleep && !state.pendingReply && !this.inFlight.has(entry.name)) {
             const day = life.local.dateKey;
             if (state.initiativeDay?.date !== day) state.initiativeDay = { date: day, count: 0 };
             const gapOk = !state.lastInitiativeAt || now.getTime() - new Date(state.lastInitiativeAt).getTime() >= init.min_gap_minutes * MINUTE;
             const quietOk = !state.lastCharMessageAt || now.getTime() - new Date(state.lastCharMessageAt).getTime() >= 20 * MINUTE;
             const capOk = state.initiativeDay.count < init.max_per_day;
-            if (gapOk && quietOk && capOk) {
+            const backoffUntil = state.greetingBackoffUntil ? new Date(state.greetingBackoffUntil).getTime() : 0;
+            const backoffOk = now.getTime() >= backoffUntil; // inside the window = NOT ok
+            const freshJournal = state.lastJournalAt && (!state.lastInitiativeAt || new Date(state.lastJournalAt) > new Date(state.lastInitiativeAt));
+            const freshFromUser = state.lastUserMessageAt && (!state.lastInitiativeAt || new Date(state.lastUserMessageAt) > new Date(state.lastInitiativeAt));
+            const hasHappening = (state.happenings ?? []).some((h) => !h.used);
+            const materialOk = freshJournal || freshFromUser || hasHappening;
+            if (gapOk && quietOk && capOk && backoffOk && materialOk) {
                 const relFactor = 0.7 + state.relationship / 100;
                 const pTick = Math.min(0.2, (this.tickSeconds / (init.min_gap_minutes * 60)) * (0.4 + 0.6 * life.availability) * relFactor);
                 this.#blockReason(entry.name, null);
@@ -551,7 +561,9 @@ export class Engine {
                 this.#blockReason(entry.name,
                     !gapOk ? `waiting out the ${init.min_gap_minutes} min gap since the last initiative`
                         : !quietOk ? 'messaged you less than 20 min ago'
-                            : `daily initiative cap reached (${state.initiativeDay.count}/${init.max_per_day})`);
+                            : !capOk ? `daily initiative cap reached (${state.initiativeDay.count}/${init.max_per_day})`
+                                : !backoffOk ? `backing off after bare "hey"-style texts with no reply from you (until ${new Date(state.greetingBackoffUntil).toLocaleTimeString()})`
+                                    : 'nothing new to say — no fresh journal thought, nothing new from you, no happenings noted');
             }
         } else if (init.enabled) {
             this.#blockReason(entry.name,
@@ -589,6 +601,15 @@ export class Engine {
             && (!state.lastJournalAt || now.getTime() - new Date(state.lastJournalAt).getTime() > 3 * HOUR)
             && this.rng.float() < 0.08) {
             await this.#journal(entry, state, life, now);
+        }
+
+        // 6. happening supply — small invented everyday events initiative can
+        // mention (the material that prevents the bare-greeting spiral)
+        const unusedHappenings = (state.happenings ?? []).filter((h) => !h.used).length;
+        if (!life.isAsleep && unusedHappenings < 2
+            && (!state.lastHappeningAt || now.getTime() - new Date(state.lastHappeningAt).getTime() > 3 * HOUR)
+            && this.rng.float() < 0.25) {
+            await this.#happening(entry, state, life, now);
         }
     }
 
@@ -657,10 +678,20 @@ export class Engine {
         }
         const candidates = [...new Set([this.settings.model?.current, this.settings.model?.fallback].filter(Boolean))];
         // one instruction block, not several: the turn directive carries the
-        // gap note and availability tone inline (the memory block stays
-        // separate — it is content about the past, not instructions)
+        // gap note, availability tone, and (initiative only) a fresh
+        // happening she could mention (the memory block stays separate — it
+        // is content about the past, not instructions)
+        let usedHappening = null;
+        let happeningLine = null;
+        if (kind === 'initiative') {
+            usedHappening = (state.happenings ?? []).find((h) => !h.used) ?? null;
+            if (usedHappening) {
+                happeningLine = `(Private: something small happened to you recently: "${usedHappening.text}" — you could text about it naturally if it fits, or ignore it entirely. Never present it as a report or narrate these instructions.)`;
+            }
+        }
         const instruction = [
             buildDirective(kind, this.settings.directives, this.chatStore.userName, { kind, charName: entry.name }),
+            happeningLine,
             extra?.system,
             toneNote,
         ].filter(Boolean).join('\n');
@@ -826,14 +857,27 @@ export class Engine {
         }
         state.lastCharMessageAt = now.toISOString();
         state.lastContactAt = now.toISOString();
+        const fullText = sendTexts.join('\n\n');
         if (kind === 'initiative') {
             state.lastInitiativeAt = now.toISOString();
             if (state.initiativeDay?.date === life.local.dateKey) state.initiativeDay.count += 1;
             else state.initiativeDay = { date: life.local.dateKey, count: 1 };
+            // greeting-spiral breaker: consecutive bare "hey"-style pings into
+            // silence back initiative off — a person with nothing to say
+            // doesn't keep saying hey
+            if (isBareGreeting(fullText, this.chatStore.userName)) {
+                state.greetingRun = (state.greetingRun ?? 0) + 1;
+                if (state.greetingRun >= 2) {
+                    state.greetingBackoffUntil = new Date(now.getTime() + 4 * HOUR).toISOString();
+                    this.#audit(entry.name, 'initiative_blocked', `${state.greetingRun} bare greetings in a row with no reply from you — initiative backing off until ${new Date(state.greetingBackoffUntil).toLocaleTimeString()}`);
+                }
+            } else {
+                state.greetingRun = 0;
+                if (usedHappening) usedHappening.used = true; // she texted content; the prompt material was (probably) consumed
+            }
         }
         this.store.saveState(state);
 
-        const fullText = sendTexts.join('\n\n');
         this.log(`"${entry.name}" ${kind} → "${fullText.slice(0, 60)}${fullText.length > 60 ? '…' : ''}" [${usedModel}]`);
         this.emit('character_message', { character: entry.name, kind, mes: fullText, chatFile: state.chatFile });
         const kindLabel = { reply: 'replied', initiative: 'texted you first (initiative)', catchup: 'caught up on the missed message', followup: 'sent a follow-up nudge' }[kind] ?? kind;
@@ -919,6 +963,61 @@ export class Engine {
         } catch (err) {
             this.log(`journal for "${entry.name}" failed: ${err.message}`);
         }
+    }
+
+    /**
+     * Generate one small invented everyday happening — the engine's only
+     * invented content, and the supply that gives initiative something to
+     * say (journal grounding keeps shared history honest; a life with no
+     * events produces bare "hey" pings).
+     */
+    async #happening(entry, state, life, now) {
+        try {
+            const model = this.effectiveModel();
+            if (!(await this.ollama.hasModel(model))) return;
+            const directive = buildHappeningPrompt({ card: entry.card, life, userName: this.chatStore.userName });
+            const sections = promptSections({
+                card: entry.card,
+                autolife: entry.autolife,
+                life,
+                relationshipScore: state.relationship,
+                journal: [],
+                userName: this.chatStore.userName,
+            });
+            const identity = [
+                sections.identity, sections.description, sections.personality,
+                sections.scenario, sections.relationship, sections.life,
+            ].filter(Boolean).join('\n\n');
+            const messages = [
+                { role: 'system', content: `${identity}\n\n${directive}` },
+                { role: 'user', content: '(write one small thing that happened)' },
+            ];
+            const raw = await this.ollama.chat({ model, messages, numPredict: 120, logMeta: { character: entry.name, kind: 'happening' } });
+            const { text: stripped } = stripLeakedScaffolding(cleanModelOutput(raw));
+            const text = trimToCompleteSentence(stripped).slice(0, 200);
+            if (!text) return;
+            state.happenings = [
+                ...(state.happenings ?? []).filter((h) => !h.used),
+                { ts: now.toISOString(), text, used: false },
+            ].slice(-3);
+            state.lastHappeningAt = now.toISOString();
+            this.store.saveState(state);
+            this.log(`"${entry.name}" happening noted: ${text.slice(0, 60)}…`);
+            this.#audit(entry.name, 'happening', `happening noted: ${text.slice(0, 100)}${text.length > 100 ? '…' : ''}`);
+        } catch (err) {
+            this.log(`happening for "${entry.name}" failed: ${err.message}`);
+        }
+    }
+
+    /** Force one happening now (tests / future panel button). @returns text or null */
+    async happeningNow(character) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        const state = this.#state(entry);
+        this.#ensureChat(entry, state);
+        const life = evaluate(entry.autolife, this.nowFn());
+        await this.#happening(entry, state, life, new Date());
+        return [...(state.happenings ?? [])].reverse().find((h) => !h.used)?.text ?? null;
     }
 
     /** Force one journal entry now (panel button). @returns the note or null */

@@ -417,3 +417,23 @@ test('directive-echo leaks die at every layer: strip, marker coverage, acceptanc
     ], 'Sean', 'Hannah', 'UTC');
     assert.ok(mem.indexOf('earlier text') < mem.indexOf('later text'), 'chronological order');
 });
+
+test('isBareGreeting: content-free pings vs real messages', async () => {
+    const { isBareGreeting } = await import('../plugin/src/llm.js');
+    assert.ok(isBareGreeting('hey', 'Sean'));
+    assert.ok(isBareGreeting('Hey Sean 😘', 'Sean'));
+    assert.ok(isBareGreeting('hiii you', 'Sean'));
+    assert.ok(isBareGreeting('[Sun 8/23 1:03am] hi', 'Sean'));
+    assert.ok(!isBareGreeting('what did you want to know', 'Sean'));
+    assert.ok(!isBareGreeting('Hey Sean', 'Marcus'), 'name mismatch is not a greeting to you');
+    assert.ok(!isBareGreeting('hey did you watch the game', 'Sean'));
+});
+
+test('punctuation-run garbage collapses; human doubles survive', async () => {
+    const { sanitizeTextingOutput } = await import('../plugin/src/llm.js');
+    assert.equal(sanitizeTextingOutput('it;;;;'), 'it');
+    assert.equal(sanitizeTextingOutput('hey;;'), 'hey');
+    assert.equal(sanitizeTextingOutput('really??'), 'really??', 'human ?? stays');
+    assert.equal(sanitizeTextingOutput('wait?!'), 'wait?!', '?! stays');
+    assert.equal(sanitizeTextingOutput('stop!!!!!!'), 'stop!!');
+});

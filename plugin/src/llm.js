@@ -528,6 +528,21 @@ export function trimToCompleteSentence(text) {
 }
 
 /**
+ * Directive for inventing a small everyday happening. The ONE place the
+ * engine allows invention: her own day's minor events (journal grounding
+ * keeps the SHARED history honest, but a life with no events gives her
+ * nothing to text about — the greeting spiral). Never involves the user.
+ */
+export function buildHappeningPrompt(ctx) {
+    const data = ctx.card.data ?? ctx.card;
+    return [
+        `Write ONE sentence describing a small, mundane thing that just happened while you were ${ctx.life.activity} — a minor everyday event: something you saw, a small annoyance, a little win, an odd detail.`,
+        `It must fit who you are and where you are. It must NOT involve ${ctx.userName} and must not reference any conversation or message — this is your own life happening offline, independent of your phone.`,
+        `Plain text, first person, one sentence, no headings. Small and believable beats dramatic.`,
+    ].join(' ');
+}
+
+/**
  * Prompt scaffolding that must never reach the user: bracketed system labels
  * the model invents ("[SYSTEM_PROMPT]"), raw instruct-template tokens, and —
  * the observed failure — verbatim parroting of our own injected headers (the
@@ -579,6 +594,25 @@ export function looksLikeDirectiveLeak(text) {
     return /private direction|instructions for your next message|follow them, never mention them|do not reference these directions/i.test(String(text ?? ''));
 }
 
+/**
+ * A bare greeting: "hey", "hi Sean 😘", "hey you" — content-free pings.
+ * Used by the engine's greeting-spiral breaker (initiative backs off after
+ * consecutive bare greetings with no reply). Anything with actual content
+ * ("what did you want to know?") is not a greeting.
+ */
+export function isBareGreeting(text, userName = '') {
+    const words = String(text ?? '')
+        .toLowerCase()
+        .replace(/\[[^\]]*\]/g, ' ')   // stamps
+        .replace(/[^a-z\s]/g, ' ')     // punctuation, emoji, numbers
+        .split(/\s+/)
+        .filter(Boolean);
+    if (!words.length || words.length > 3) return false;
+    const greetings = new Set(['hey', 'heyy', 'heyyy', 'hi', 'hii', 'hiii', 'hello', 'yo', 'sup', 'hiya', 'heya', 'gm', 'morning', 'evening', 'afternoon', 'you', 'there']);
+    const nameWords = new Set(String(userName ?? '').toLowerCase().split(/\s+/).filter(Boolean));
+    return words.every((w) => greetings.has(w) || nameWords.has(w));
+}
+
 /** Clean up raw model output into something text-message shaped. */
 export function cleanModelOutput(text) {
     let out = String(text ?? '').trim();
@@ -618,6 +652,11 @@ export function sanitizeTextingOutput(text) {
     // of line. Matches any prefix of the stamp format, anchored at EOL.
     out = out.replace(/\[(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*(?:\s+\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?)?(?:\s+\d{1,2}(?::\d{2})?(?:\s?(?:a|p)m?)?)?)?[ \t]*$/gim, '');
     out = out.replace(/[ \t]+$/gm, '');
+    // punctuation-run garbage: "it;;;;", "hey;;" — models trailing off with
+    // semicolon runs. Collapse same-char runs; keep human "?!" doubles.
+    out = out.replace(/([;:,]){2,}/g, '$1');
+    out = out.replace(/([!?]){3,}/g, '$1$1');
+    out = out.replace(/[;:]+\s*$/gm, '');
     // bracketed meta lines, e.g. [Continue...], (OOC: ...)
     out = out.replace(/^\s*[\[(]\s*(continue|ooc|note|system|assistant)[^)\]]*[\])]\s*$/gim, '');
     // quote-style echo lines ("> what you said")
