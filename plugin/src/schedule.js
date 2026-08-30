@@ -40,6 +40,14 @@ export function parseHHMM(s) {
     return Number(m[1]) * 60 + Number(m[2]);
 }
 
+/** "14:05" -> "2:05pm" for prompt-facing labels. */
+export function label12(hhmm) {
+    const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(hhmm ?? ''));
+    if (!m) return String(hhmm ?? '');
+    const h = Number(m[1]);
+    return `${((h + 11) % 12) + 1}:${m[2]}${h < 12 ? 'am' : 'pm'}`;
+}
+
 /**
  * Resolve the character's life context at a point in time.
  * @param {{ timezone?: string, schedule?: Array }} autolife normalized autolife config

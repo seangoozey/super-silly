@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.18';
+const EXT_VERSION = '0.6.19';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -152,6 +152,12 @@ function dashboardHtml() {
                         <input type="checkbox" id="autolife_feature_journal" checked>
                         <label>Evolve (global)</label>
                         <input type="checkbox" id="autolife_feature_evolve" checked>
+                        <label>Invent concrete schedule activities</label>
+                        <input type="checkbox" id="autolife_feature_enhance" checked>
+                        <label>Journal entries in prompts</label>
+                        <input type="number" id="autolife_reflect_journal" min="1" max="20" value="3">
+                        <label>Evolution notes in prompts</label>
+                        <input type="number" id="autolife_reflect_evolve" min="1" max="20" value="6">
                         <label>Quiet hours (your sleep)</label>
                         <span><input type="checkbox" id="autolife_quiet_enabled">
                         <input type="text" id="autolife_quiet_start" style="width:52px" placeholder="23:00"> –
@@ -1250,6 +1256,9 @@ async function loadTelegramSection() {
         $('#autolife_feature_memory').prop('checked', settings.features?.memory !== false);
         $('#autolife_feature_journal').prop('checked', settings.features?.journal !== false);
         $('#autolife_feature_evolve').prop('checked', settings.features?.evolve !== false);
+        $('#autolife_feature_enhance').prop('checked', settings.features?.schedule_enhance !== false);
+        $('#autolife_reflect_journal').val(settings.reflections?.journal ?? 3);
+        $('#autolife_reflect_evolve').val(settings.reflections?.evolve ?? 6);
         $('#autolife_quiet_enabled').prop('checked', !!settings.quiet_hours?.enabled);
         $('#autolife_quiet_start').val(settings.quiet_hours?.start ?? '23:00');
         $('#autolife_quiet_end').val(settings.quiet_hours?.end ?? '07:00');
@@ -1783,6 +1792,11 @@ function wireEvents() {
                     memory: $('#autolife_feature_memory').prop('checked'),
                     journal: $('#autolife_feature_journal').prop('checked'),
                     evolve: $('#autolife_feature_evolve').prop('checked'),
+                    schedule_enhance: $('#autolife_feature_enhance').prop('checked'),
+                },
+                reflections: {
+                    journal: Number($('#autolife_reflect_journal').val()) || 3,
+                    evolve: Number($('#autolife_reflect_evolve').val()) || 6,
                 },
                 quiet_hours: {
                     enabled: $('#autolife_quiet_enabled').prop('checked'),

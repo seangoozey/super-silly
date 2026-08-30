@@ -230,11 +230,19 @@ export function registerRoutes(router, deps) {
         if (body.features) {
             const before = { ...settings.features };
             settings.features = { ...settings.features, ...body.features };
-            for (const k of ['memory', 'journal', 'evolve']) {
+            for (const k of ['memory', 'journal', 'evolve', 'schedule_enhance']) {
                 if (typeof body.features[k] === 'boolean' && before[k] !== body.features[k]) {
                     audit(null, 'engine', k + ' ' + (body.features[k] ? 'enabled' : 'disabled') + ' globally');
                 }
             }
+        }
+        if (body.reflections) {
+            settings.reflections = { ...settings.reflections };
+            for (const k of ['journal', 'evolve']) {
+                const v = Number(body.reflections[k]);
+                if (Number.isFinite(v)) settings.reflections[k] = Math.max(1, Math.min(20, Math.round(v)));
+            }
+            audit(null, 'engine', `reflection counts: ${settings.reflections.journal} journal entries, ${settings.reflections.evolve} evolution notes in prompts`);
         }
         if (body.prompt_log) {
             const before = settings.prompt_log?.enabled === true;

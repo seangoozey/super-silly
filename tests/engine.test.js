@@ -695,3 +695,67 @@ test('happenings: invented everyday events supply initiative material and get co
     st = stateOf(h.store, 'Lived');
     assert.equal(st.happenings.filter((x) => !x.used).length, 0, 'consumed after a content initiative');
 });
+
+test('schedule enhancement: lazy per-block activity, cached, used in lieu of schedule text', async () => {
+    const card = characterCard('Cafe', {
+        schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], start: '09:00', end: '23:00', activity: 'at work', availability: 0.7 }],
+    });
+    // first call = enhancement, second = the main reply
+    const h = buildHarness({
+        card,
+        rngValues: [0.99, 0.0, 0.0],
+        reply: ['reconciling the invoices with half a latte going cold', 'main reply with fresh words'],
+    });
+    await h.engine.onInbound({ character: 'Cafe', mes: 'you around?', source: 'telegram' });
+
+    // the enhancement generation ran once, asked about the block with its timeframe
+    const enhanceReqs = h.chatReqs.filter((r) => r.logMeta?.kind === 'schedule_enhance');
+    assert.equal(enhanceReqs.length, 1, 'enhancement generated once per block');
+    assert.ok(enhanceReqs[0].messages.some((m) => m.content.includes('"at work"')));
+    assert.ok(enhanceReqs[0].messages.some((m) => m.content.includes('9:00am to 11:00pm')));
+
+    // the main prompt used the enhanced activity instead of the raw schedule text
+    const main = h.chatReqs.find((r) => r.logMeta?.kind === 'reply');
+    assert.ok(main.messages.some((m) => m.content.includes('reconciling the invoices')), 'enhanced activity replaces schedule text');
+    assert.ok(!main.messages.some((m) => m.content.includes('Your life right now: it is') && m.content.includes('at work')), 'raw schedule text gone');
+
+    // a second generation in the same block uses the cache — no new enhancement call
+    await h.engine.onInbound({ character: 'Cafe', mes: 'still there?', source: 'telegram' });
+    assert.equal(h.chatReqs.filter((r) => r.logMeta?.kind === 'schedule_enhance').length, 1, 'cache holds for the block');
+    const state = stateOf(h.store, 'Cafe');
+    assert.ok(Object.values(state.enhanced ?? {}).some((e) => /invoices/.test(e.text)), 'cached in state');
+});
+
+test('schedule enhancement can be disabled', async () => {
+    const card = characterCard('Plain', {
+        schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], start: '09:00', end: '23:00', activity: 'at work', availability: 0.7 }],
+    });
+    const h = buildHarness({ card, rngValues: [0.99, 0.0], reply: 'an ordinary reply with fresh words' });
+    const s = h.store.loadSettings();
+    s.features = { ...s.features, schedule_enhance: false };
+    h.store.saveSettings(s);
+    h.engine.refreshSettings();
+    await h.engine.onInbound({ character: 'Plain', mes: 'hi', source: 'telegram' });
+    assert.equal(h.chatReqs.filter((r) => r.logMeta?.kind === 'schedule_enhance').length, 0, 'no enhancement when disabled');
+});
+
+test('evolution generation sees only card + journals + reflections (no chat)', async () => {
+    const card = characterCard('Grower2', { evolve: { enabled: true } });
+    const h = buildHarness({ card, rngValues: [], reply: 'I have grown more patient with Sean over these months.' });
+    const st = stateOf(h.store, 'Grower2');
+    st.journal = [{ ts: '2026-01-01T00:00:00Z', text: 'JOURNAL-MARKER thought one' }];
+    st.evolve = { lastReflectAt: null, notes: [{ ts: '2026-01-02T00:00:00Z', text: 'EVOLUTION-MARKER earlier reflection', status: 'approved' }] };
+    h.store.saveState(st);
+
+    // a chat history exists — it must not appear in the evolution prompt
+    h.chatStore.appendMessage('Grower2', st.chatFile ?? (st.chatFile = h.chatStore.createChat('Grower2', 'hello')), { name: 'Grower2', is_user: false, mes: 'CHAT-MARKER message body', send_date: '2026-01-03T00:00:00Z' });
+
+    await h.engine.reflectNow('Grower2');
+    const req = h.chatReqs.at(-1);
+    const system = req.messages.find((m) => m.role === 'system').content;
+    assert.ok(system.includes('JOURNAL-MARKER'), 'all journal entries included');
+    assert.ok(system.includes('EVOLUTION-MARKER'), 'all past reflections included');
+    assert.ok(system.includes('personality: cooperative'), 'card included');
+    assert.ok(!req.messages.some((m) => m.role === 'assistant' || m.role === 'user' && m.content.includes('CHAT-MARKER')), 'no chat entries in evolution');
+    assert.ok(system.includes('Never use pronouns for people'));
+});

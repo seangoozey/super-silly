@@ -428,3 +428,54 @@ test('isBareGreeting: content-free pings vs real messages', async () => {
     assert.ok(!isBareGreeting('Hey Sean', 'Marcus'), 'name mismatch is not a greeting to you');
     assert.ok(!isBareGreeting('hey did you watch the game', 'Sean'));
 });
+
+test('reflection counts: promptSections honors configured entry counts', async () => {
+    const { promptSections } = await import('../plugin/src/llm.js');
+    const journals = [1, 2, 3, 4, 5].map((i) => ({ ts: `2026-01-0${i}T00:00:00Z`, text: `note ${i}` }));
+    const notes = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({ ts: `2026-01-0${i}T00:00:00Z`, text: `reflection ${i}`, status: 'approved' }));
+    const ctx = {
+        card: { data: { name: 'Hannah' } },
+        autolife: { timezone: 'UTC', behavior: {}, journal: { enabled: true }, evolve: { enabled: true } },
+        life: { activity: 'reading', availability: 0.5, local: { hhmm12: '2:04pm', weekdayName: 'Sunday', dateShort: '8/23/26' } },
+        relationshipScore: 40,
+        userName: 'Sean',
+        journal: journals,
+        evolveNotes: notes,
+        journalCount: 2,
+        evolveCount: 3,
+    };
+    const s = promptSections(ctx);
+    assert.ok(s.journal.includes('note 5') && !s.journal.includes('note 3'), 'journal count limits entries, newest kept');
+    assert.ok(s.evolve.includes('reflection 8') && !s.evolve.includes('reflection 5'), 'evolve count limits entries');
+    // defaults apply when counts absent
+    const s2 = promptSections({ ...ctx, journalCount: undefined, evolveCount: undefined });
+    assert.ok(s2.journal.includes('note 3'));
+    assert.ok(s2.evolve.includes('reflection 3'));
+});
+
+test('evolve prompt: card + all journals + all reflections, no chat, no pronouns', async () => {
+    const { buildEvolvePrompt, buildScheduleEnhancePrompt } = await import('../plugin/src/llm.js');
+    const p = buildEvolvePrompt({
+        card: { data: { name: 'Huyen', personality: 'sharp', scenario: 'married to Sean' } },
+        userName: 'Sean',
+        journals: [{ text: 'venti latte, art messed up twice' }],
+        evolutions: [{ text: 'I have gotten sharper with Sean' }],
+    });
+    assert.ok(p.includes('venti latte'));
+    assert.ok(p.includes('gotten sharper with Sean'));
+    assert.ok(p.includes('never on individual text messages'));
+    assert.ok(p.includes('Never use pronouns for people'));
+    assert.ok(p.includes('personality: sharp'));
+
+    const e = buildScheduleEnhancePrompt({
+        card: { data: { name: 'Huyen' } },
+        block: { activity: 'at work', start: '09:00', end: '17:00' },
+        local: { hhmm12: '2:04pm' },
+        startLabel: '9:00am',
+        endLabel: '5:00pm',
+        userName: 'Sean',
+    });
+    assert.ok(e.includes('"at work"'));
+    assert.ok(e.includes('9:00am to 5:00pm'));
+    assert.ok(e.includes('2:04pm'));
+});

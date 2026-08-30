@@ -3,8 +3,8 @@
 // their messages through Ollama, writing them into the SillyTavern chat and
 // pushing them to bound transports (Telegram).
 
-import { evaluate, sampleDelayMinutes, clamp01, localParts } from './schedule.js';
-import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, buildHappeningPrompt, promptSections, historyToOllama, buildMemoryContext, buildDirective, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, looksLikeDirectiveLeak, isBareGreeting, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
+import { evaluate, sampleDelayMinutes, clamp01, localParts, label12 } from './schedule.js';
+import { buildSystemPrompt, buildChatMessages, buildJournalPrompt, buildEvolvePrompt, buildHappeningPrompt, buildScheduleEnhancePrompt, promptSections, historyToOllama, buildMemoryContext, buildDirective, messageStamp, cleanModelOutput, sanitizeTextingOutput, stripLeakedScaffolding, looksLikeDirectiveLeak, isBareGreeting, extractFollowUpMarker, looksLikeEcho, looksLikeSelfRepeat, splitIntoTexts, trimToCompleteSentence, NUM_PREDICT } from './llm.js';
 import { loadPreset, presetToSamplers } from './presets.js';
 import { messageKey } from './memory.js';
 
@@ -34,6 +34,7 @@ export class Engine {
         this.#applyUserName();
         this.inFlight = new Map(); // character name -> Promise
         this.blockMemo = new Map(); // character name -> last initiative-block reason (audit on change)
+        this.enhanceMemo = new Map(); // character:block -> in-flight schedule-enhancement promise
         this.timer = null;
         this.running = false;
     }
@@ -484,6 +485,7 @@ export class Engine {
 
     async #runCharacter(entry, state, now) {
         const life = evaluate(entry.autolife, now);
+        life.activity = (await this.#enhanceActivity(entry, state, life, now)) || life.activity;
         const init = entry.autolife.initiative;
         const b = entry.autolife.behavior;
         const quietHold = this.quietHold(state, now);
@@ -648,6 +650,7 @@ export class Engine {
 
         const ctxTemplate = entry.autolife.prompt?.template?.trim() || this.settings.prompt?.template?.trim() || null;
         const burstsEnabled = this.settings.engine?.followup_bursts === true;
+        life.activity = (await this.#enhanceActivity(entry, state, life, now)) || life.activity;
         const system = buildSystemPrompt({
             card: entry.card,
             autolife: entry.autolife,
@@ -657,6 +660,8 @@ export class Engine {
             userName: this.chatStore.userName,
             template: ctxTemplate,
             bursts: burstsEnabled,
+            journalCount: Number(this.settings.reflections?.journal) || 3,
+            evolveCount: Number(this.settings.reflections?.evolve) || 6,
             evolveNotes: (state.evolve?.notes ?? []).filter((n) => n.status === 'approved'),
         });
 
@@ -1009,6 +1014,79 @@ export class Engine {
         }
     }
 
+    /**
+     * Concrete current activity for this schedule block: lazily generated the
+     * first time any prompt lands inside a block occurrence (day + block),
+     * then cached in state until the day rolls over. Returns null when there
+     * is nothing better than the raw schedule text (toggle off, no block,
+     * asleep, generation failed).
+     */
+    async #enhanceActivity(entry, state, life, now) {
+        if (this.settings.features?.schedule_enhance === false || life.isAsleep) return null;
+        const idx = life.blockIndex;
+        const blocks = entry.autolife.schedule ?? [];
+        const block = blocks[idx];
+        if (idx < 0 || !block) return null;
+        const key = `${life.local.dateKey}:${idx}`;
+        state.enhanced = state.enhanced ?? {};
+        if (state.enhanced[key]?.text) return state.enhanced[key].text;
+        const model = this.effectiveModel();
+        if (!(await this.ollama.hasModel(model))) return null;
+        const memoKey = `${entry.name}:${key}`;
+        if (this.enhanceMemo.has(memoKey)) {
+            try { return (await this.enhanceMemo.get(memoKey)) || null; } catch { return null; }
+        }
+        const job = (async () => {
+            const directive = buildScheduleEnhancePrompt({
+                card: entry.card,
+                block,
+                local: life.local,
+                startLabel: label12(block.start),
+                endLabel: label12(block.end),
+                userName: this.chatStore.userName,
+            });
+            const sections = promptSections({
+                card: entry.card,
+                autolife: entry.autolife,
+                life,
+                relationshipScore: state.relationship,
+                journal: [],
+                userName: this.chatStore.userName,
+            });
+            const identity = [
+                sections.identity, sections.description, sections.personality, sections.scenario,
+            ].filter(Boolean).join('\n\n');
+            const raw = await this.ollama.chat({
+                model,
+                messages: [
+                    { role: 'system', content: `${identity}\n\n${directive}` },
+                    { role: 'user', content: '(write what you are doing)' },
+                ],
+                numPredict: 140,
+                logMeta: { character: entry.name, kind: 'schedule_enhance' },
+            });
+            const { text: stripped } = stripLeakedScaffolding(cleanModelOutput(raw));
+            const text = trimToCompleteSentence(stripped).slice(0, 240);
+            // the cache only needs today's blocks
+            for (const k of Object.keys(state.enhanced)) {
+                if (!k.startsWith(`${life.local.dateKey}:`)) delete state.enhanced[k];
+            }
+            if (text) {
+                state.enhanced[key] = { text, ts: now.toISOString() };
+                this.store.saveState(state);
+                this.#audit(entry.name, 'schedule', `activity enhanced (${block.start}–${block.end}): ${text.slice(0, 100)}${text.length > 100 ? '…' : ''}`);
+            }
+            return text || null;
+        })();
+        this.enhanceMemo.set(memoKey, job);
+        try {
+            return await job;
+        } catch (err) {
+            this.log(`schedule enhancement for "${entry.name}" failed: ${err.message}`);
+            return null;
+        }
+    }
+
     /** Force one happening now (tests / future panel button). @returns text or null */
     async happeningNow(character) {
         const entry = this.cards.find(character);
@@ -1068,21 +1146,24 @@ export class Engine {
         try {
             const model = this.effectiveModel();
             if (!(await this.ollama.hasModel(model))) return null;
-            const directive = buildEvolvePrompt({ card: entry.card, userName: this.chatStore.userName });
-            const journal = (state.journal ?? []).slice(-5).map((j) => `- ${j.text}`).join('\n');
-            const system = journal ? `${directive}\n\nYour recent journal:\n${journal}` : directive;
-            const history = historyToOllama(
-                this.chatStore.readMessages(entry.name, state.chatFile, 10),
-                entry.name,
-                this.chatStore.userName,
-                10,
-                entry.autolife.timezone,
-            );
+            // evolution is deliberately narrow: the card as written + ALL of
+            // her own private writing (journal entries, past reflections).
+            // Never chat messages — personality drift must be slow and
+            // self-authored, not a reaction to one exchange.
+            const system = buildEvolvePrompt({
+                card: entry.card,
+                userName: this.chatStore.userName,
+                journals: state.journal ?? [],
+                evolutions: state.evolve?.notes ?? [],
+            });
             const raw = await this.ollama.chat({
                 model,
-                messages: [{ role: 'system', content: system }, ...history, { role: 'user', content: '(write your reflection now)' }],
+                messages: [
+                    { role: 'system', content: system },
+                    { role: 'user', content: '(write your reflection now)' },
+                ],
                 temperature: 0.6,
-                numPredict: 120,
+                numPredict: 160,
                 logMeta: { character: entry.name, kind: 'evolve' },
             });
             const { text: cleanText } = stripLeakedScaffolding(cleanModelOutput(raw));

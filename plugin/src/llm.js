@@ -330,7 +330,8 @@ export function promptSections(ctx) {
     sections.scenario = data.scenario?.trim() ? `Situation between you two: ${sub(data.scenario)}` : null;
     sections.aboutUser = a.about_user?.trim() ? `What you know about ${ctx.userName}: ${sub(a.about_user)}` : null;
     if (a.evolve?.enabled && ctx.evolveNotes?.length) {
-        const recent = ctx.evolveNotes.slice(-6).map((n) => `- ${n.text}`).join('\n');
+        const count = Math.max(1, Number(ctx.evolveCount) || 6);
+        const recent = ctx.evolveNotes.slice(-count).map((n) => `- ${n.text}`).join('\n');
         sections.evolve = `How you've changed since the above was written (your own later reflections — live them, don't recite them):\n${recent}`;
     } else {
         sections.evolve = null;
@@ -342,7 +343,8 @@ export function promptSections(ctx) {
     sections.relationship = `Your relationship with ${ctx.userName} is ${relationshipDescriptor(ctx.relationshipScore)} (${Math.round(ctx.relationshipScore)}/100).`;
 
     if (a.journal?.enabled && ctx.journal?.length) {
-        const recent = ctx.journal.slice(-3).map((j) => `- ${j.text}`).join('\n');
+        const count = Math.max(1, Number(ctx.journalCount) || 3);
+        const recent = ctx.journal.slice(-count).map((j) => `- ${j.text}`).join('\n');
         sections.journal = `Your recent private notes to yourself (never mention the notes, just let them shape your messages):\n${recent}`;
     } else {
         sections.journal = null;
@@ -445,18 +447,41 @@ export function defaultPromptTemplate() {
 }
 
 /**
- * Directive for a self-reflection ("how I've changed") note. Cool generation,
- * grounded in journal + actual messages, hard-clamped against redefining core
- * personality.
+ * Directive for a self-reflection ("how I've changed") note. Deliberately
+ * narrow inputs: the card as written + ALL journal entries + ALL past
+ * reflections — never individual chat messages, so personality drift is a
+ * slow, self-authored process rather than a reaction to one exchange.
  */
 export function buildEvolvePrompt(ctx) {
     const data = ctx.card.data ?? ctx.card;
+    const journals = (ctx.journals ?? []).length
+        ? (ctx.journals ?? []).map((j) => `- ${j.text}`).join('\n')
+        : '(none yet)';
+    const evolutions = (ctx.evolutions ?? []).length
+        ? (ctx.evolutions ?? []).map((n) => `- ${n.text}`).join('\n')
+        : '(none yet)';
     return [
-        `You are ${data.name}. Your personality as originally written: ${data.personality?.trim() || '(none)'}.`,
-        `Your situation as originally written: ${data.scenario?.trim() || '(none)'}.`,
-        `Based on your recent journal notes and your ACTUAL messages with ${ctx.userName} shown in this conversation, reflect on how you have DURABLY changed since that was written — not a passing mood.`,
-        `Write 1-2 short first-person sentences describing the change (e.g. "I have gotten much more sarcastic with them than I used to be.").`,
-        'Rules: never contradict your core personality; describe change relative to the original writing; plain text only; no lists.',
+        `You are ${data.name}. Your original writing — personality: ${data.personality?.trim() || '(none)'}. situation: ${data.scenario?.trim() || '(none)'}.`,
+        `Reflect on how you have DURABLY changed since that was written — not a passing mood. Base it ONLY on your own private writing below and the original writing; never on individual text messages.`,
+        `Your journal entries (all of them):\n${journals}`,
+        `Your past reflections (all of them):\n${evolutions}`,
+        `Write 1-2 short first-person sentences describing the change. Never contradict your core personality. Never use pronouns for people — use names and titles (${ctx.userName}, your own name ${data.name}, "my boss Dana"): you will reread this months later and "she" or "he" means nothing. Plain text, no lists.`,
+    ].join('\n\n');
+}
+
+/**
+ * Directive for enhancing a schedule block into a concrete current activity.
+ * Run lazily the first time a prompt lands inside a block; cached per block
+ * instance (day + block). Gives the model a specific "what you are actually
+ * doing" instead of the generic weekly text, with the block's time frame.
+ */
+export function buildScheduleEnhancePrompt(ctx) {
+    const data = ctx.card.data ?? ctx.card;
+    const block = ctx.block;
+    return [
+        `You are ${data.name}. Your weekly schedule says: "${block.activity}" from ${ctx.startLabel} to ${ctx.endLabel} — it is now ${ctx.local.hhmm12}.`,
+        `Invent the SPECIFIC thing you are doing right now within that block: concrete, grounded in the block, small and believable — e.g. "at work" becomes "reconciling the cafe's invoices with half a latte going cold beside the register".`,
+        `One sentence, present tense, plain text. Never use pronouns for people — names and titles only. This becomes what you are actually doing for the rest of this time block.`,
     ].join(' ');
 }
 
@@ -511,6 +536,7 @@ export function buildJournalPrompt(ctx) {
     return [
         `Write 1-2 sentences of ${data.name}'s PRIVATE DIARY THOUGHTS — internal reflection, never anything you would say out loud.`,
         `Style rules: every sentence is complete (subject and verb, ending punctuation); write ABOUT your feelings, plans, worries, opinions, or observations — never transcribe, quote, reply to, or summarize any text message; do not retell events you already texted ${ctx.userName} about — note what they meant to you or what you keep thinking about them.`,
+        `Never use pronouns for people — write names and titles instead (${ctx.userName}, your own name ${data.name}, "my boss Dana", "Huyen, Sean's wife"): these notes are reread months later and "she" or "he" will mean nothing.`,
         `Ground everything ONLY in who you are, your current activity, and the messages listed below — NEVER invent conversations, events, or things ${ctx.userName} said that are not listed. If nothing notable happened with ${ctx.userName}, reflect on your own day or inner life instead. Plain text only, first person, no headings.`,
     ].join(' ');
 }

@@ -67,6 +67,14 @@ export function defaultSettings() {
             memory: true,
             journal: true,
             evolve: true,
+            schedule_enhance: true,
+        },
+        // How many private writings feed the prompts: journal entries in
+        // conversation prompts, evolve notes alongside them. The evolution
+        // GENERATION always sees all of both (plus the card, never chat).
+        reflections: {
+            journal: 3,
+            evolve: 6,
         },
         // Full prompt/response logging for debugging repeats — one JSON file
         // per generation under autolife/promptlog/. Off by default.
@@ -159,6 +167,7 @@ export class StateStore {
             prompt: { ...base.prompt, ...(saved.prompt ?? {}) },
             quiet_hours: { ...base.quiet_hours, ...(saved.quiet_hours ?? {}) },
             features: { ...base.features, ...(saved.features ?? {}) },
+            reflections: { ...base.reflections, ...(saved.reflections ?? {}) },
             prompt_log: { ...base.prompt_log, ...(saved.prompt_log ?? {}) },
             directives: { ...base.directives, ...(saved.directives ?? {}) },
             telegram: { ...base.telegram, ...(saved.telegram ?? {}) },

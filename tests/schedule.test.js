@@ -138,3 +138,11 @@ test('validateCard accepts a valid CCv3 card with autolife and flags one without
     assert.equal(v2.valid, true);
     assert.equal(v2.warnings.length, 1);
 });
+
+test('label12 formats prompt-facing times', async () => {
+    const { label12 } = await import('../plugin/src/schedule.js');
+    assert.equal(label12('14:05'), '2:05pm');
+    assert.equal(label12('00:30'), '12:30am');
+    assert.equal(label12('09:00'), '9:00am');
+    assert.equal(label12('garbage'), 'garbage');
+});
