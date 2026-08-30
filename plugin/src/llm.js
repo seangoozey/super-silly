@@ -652,11 +652,6 @@ export function sanitizeTextingOutput(text) {
     // of line. Matches any prefix of the stamp format, anchored at EOL.
     out = out.replace(/\[(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*(?:\s+\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?)?(?:\s+\d{1,2}(?::\d{2})?(?:\s?(?:a|p)m?)?)?)?[ \t]*$/gim, '');
     out = out.replace(/[ \t]+$/gm, '');
-    // punctuation-run garbage: "it;;;;", "hey;;" — models trailing off with
-    // semicolon runs. Collapse same-char runs; keep human "?!" doubles.
-    out = out.replace(/([;:,]){2,}/g, '$1');
-    out = out.replace(/([!?]){3,}/g, '$1$1');
-    out = out.replace(/[;:]+\s*$/gm, '');
     // bracketed meta lines, e.g. [Continue...], (OOC: ...)
     out = out.replace(/^\s*[\[(]\s*(continue|ooc|note|system|assistant)[^)\]]*[\])]\s*$/gim, '');
     // quote-style echo lines ("> what you said")

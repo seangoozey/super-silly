@@ -428,12 +428,3 @@ test('isBareGreeting: content-free pings vs real messages', async () => {
     assert.ok(!isBareGreeting('Hey Sean', 'Marcus'), 'name mismatch is not a greeting to you');
     assert.ok(!isBareGreeting('hey did you watch the game', 'Sean'));
 });
-
-test('punctuation-run garbage collapses; human doubles survive', async () => {
-    const { sanitizeTextingOutput } = await import('../plugin/src/llm.js');
-    assert.equal(sanitizeTextingOutput('it;;;;'), 'it');
-    assert.equal(sanitizeTextingOutput('hey;;'), 'hey');
-    assert.equal(sanitizeTextingOutput('really??'), 'really??', 'human ?? stays');
-    assert.equal(sanitizeTextingOutput('wait?!'), 'wait?!', '?! stays');
-    assert.equal(sanitizeTextingOutput('stop!!!!!!'), 'stop!!');
-});
