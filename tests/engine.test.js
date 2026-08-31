@@ -680,6 +680,7 @@ test('happenings: invented everyday events supply initiative material and get co
     assert.ok(text && text.length > 5, 'a happening was generated');
     assert.ok(h.chatReqs.at(-1).messages.some((m) => m.content.includes('small, mundane thing')), 'happening prompt requests an everyday event');
     assert.ok(h.chatReqs.at(-1).messages.some((m) => m.content.includes('must NOT involve')), 'happenings never involve the user');
+    assert.ok(h.chatReqs.at(-1).messages.some((m) => m.content.includes('Never use pronouns for people')), 'happening notes carry the pronoun rule');
 
     let st = stateOf(h.store, 'Lived');
     assert.equal(st.happenings.filter((x) => !x.used).length, 1, 'stored unused');

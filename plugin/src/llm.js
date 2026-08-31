@@ -564,6 +564,7 @@ export function buildHappeningPrompt(ctx) {
     return [
         `Write ONE sentence describing a small, mundane thing that just happened while you were ${ctx.life.activity} — a minor everyday event: something you saw, a small annoyance, a little win, an odd detail.`,
         `It must fit who you are and where you are. It must NOT involve ${ctx.userName} and must not reference any conversation or message — this is your own life happening offline, independent of your phone.`,
+        `Never use pronouns for people — names and titles only ("my boss Dana", "the barista, Jake"): these notes can sit for days before you mention them, and "she" will mean nothing by then.`,
         `Plain text, first person, one sentence, no headings. Small and believable beats dramatic.`,
     ].join(' ');
 }
