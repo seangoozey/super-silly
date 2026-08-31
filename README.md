@@ -36,7 +36,7 @@ First boot: the container starts Ollama, pulls the default model in the backgrou
 docker compose -f docker/docker-compose.yml -f docker/compose.dev.yml up -d --build
 ```
 
-**GPU:** install [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host, then uncomment `gpus: all` in `docker/docker-compose.yml` (or run with `--gpus all`). The image works CPU-only too — slow, but the long reply delays honestly fit the texting-sim vibe.
+**GPU:** install [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host, then install `nvidia-container-toolkit` on the host (the compose file already reserves the GPU). The image works CPU-only too — slow, but the long reply delays honestly fit the texting-sim vibe.
 
 ### Models
 
@@ -92,7 +92,7 @@ Use the server compose file — bind mounts onto a ZFS dataset (snapshot-friendl
 # on the server
 mkdir -p /mnt/tank/apps/supersilly/{config,data,ollama}   # your dataset path
 cd super-silly
-SUPERSILLY_BASE=/mnt/tank/apps/supersilly docker compose -f docker/compose.server.yml up -d --build
+SUPERSILLY_BASE=/mnt/tank/apps/supersilly docker compose up -d --build
 ```
 
 **Migrating your dev data** (chats, memory indexes, relationships, journals, Telegram bindings, persona, model settings — everything lives in the volumes):

@@ -1,7 +1,10 @@
-# Dev override for machines with <=16GB VRAM (e.g. RTX 5060):
-# run the 12B as primary and the 27B as fallback.
+# Dev override for machines with <=16GB VRAM (e.g. RTX 5060). Also swaps the
+# server bind mounts back to named volumes, so a dev box doesn't need
+# SUPERSILLY_BASE.
 #
-#   docker compose -f docker/docker-compose.yml -f docker/compose.dev.yml up -d --build
+#   docker compose -f docker-compose.yml -f compose.dev.yml up -d --build
+#
+# (run from the docker/ directory; the same targets replace the bind mounts)
 #
 services:
   supersilly:
@@ -10,3 +13,14 @@ services:
       OLLAMA_FALLBACK_MODEL: ${OLLAMA_FALLBACK_MODEL:-hf.co/ReadyArt/Dark-Scarlett-27B-v2.0-GGUF:Q4_K_M}
     ports:
       - "${SUPERSILLY_DEV_PORT:-8001}:8000"
+    volumes:
+      - ollama:/root/.ollama
+      - st-config:/home/node/app/config
+      - st-data:/home/node/app/data
+      - models:/models
+
+volumes:
+  ollama:
+  st-config:
+  st-data:
+  models:
