@@ -408,7 +408,7 @@ export function historyToOllama(history, characterName, userName, limit = 24, ti
  */
 export const DEFAULT_DIRECTIVES = {
     initiative: (userName) =>
-        `(Private direction, invisible to ${userName}: you decided to text ${userName} right now, unprompted. Send exactly ONE message. Make it feel caused by your day, the time, or something between you two. Look at your previous messages in the conversation: NEVER bring up a topic or event you already texted them about — find something new to say, or text about how you feel right now. Do not reference these directions.)`,
+        `(Private direction, invisible to ${userName}: you decided to text ${userName} right now, unprompted. Send exactly ONE message, and make it carry something — a happening, a thought, a question. NEVER open with a bare "hey"/"hi": open with the thing itself, the way you'd tell a friend "you won't believe what the barista just did". Look at your previous messages in the conversation: NEVER bring up a topic or event you already texted them about — find something new to say, or text about how you feel right now. Do not reference these directions.)`,
     followup: (userName) =>
         `(Private direction, invisible to ${userName}: you texted ${userName} earlier and they never replied. Send ONE more short message — a nudge, in character; casual, never needy; do not repeat what your earlier texts said. Do not reference these directions.)`,
     catchup: (userName) =>
@@ -542,15 +542,18 @@ export function buildJournalPrompt(ctx) {
 }
 
 /**
- * Cut a journal note back to its last complete sentence when generation was
- * truncated mid-thought (a num_predict cap used to leave entries hanging
- * mid-word, which read like broken text messages).
+ * Prune an incomplete final sentence: generation truncation leaves entries
+ * hanging mid-thought, so anything after the last complete sentence is cut.
+ * When there is NO complete sentence at all (a single sentence truncated
+ * before its period), there is nothing worth keeping — returns null and the
+ * caller skips storing the note.
  */
 export function trimToCompleteSentence(text) {
     const t = String(text ?? '').trim();
+    if (!t) return null;
     if (/[.!?]["')\]]?$/.test(t)) return t;
     const cut = Math.max(t.lastIndexOf('.'), t.lastIndexOf('!'), t.lastIndexOf('?'));
-    return cut >= 0 ? t.slice(0, cut + 1).trim() : t;
+    return cut >= 0 ? t.slice(0, cut + 1).trim() : null;
 }
 
 /**

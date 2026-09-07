@@ -716,6 +716,8 @@ export class Engine {
         const antiEchoNudge = { role: 'system', content: `(That repeated ${this.chatStore.userName}'s own words back at them — forbidden. Write YOUR OWN new reply as ${entry.name}; do not quote, echo, or restate what was said to you.)` };
         const antiLeakNudge = { role: 'system', content: `(That output reproduced prompt scaffolding — system blocks, memory lists, or hidden instructions — which is strictly forbidden. Write only ${entry.name}'s own next text message, plain text, nothing else.)` };
         const antiRepeatNudge = { role: 'system', content: `(That resends messages you already sent earlier, word for word — forbidden. Write a brand-new text that moves the conversation forward; never repeat or recite your own earlier messages.)` };
+        const antiGreetingNudge = { role: 'system', content: `(That was a contentless "hey" — forbidden. Something is on your mind: a recent happening or a journal thought. Write a text about THAT, in your own voice, opening with the thing itself; never open with just "hey" or "hi".)` };
+        const isGreetingPing = (t) => kind === 'initiative' && isBareGreeting(t, this.chatStore.userName);
         const acceptable = (candidate) => (!looksLikeEcho(candidate, userTexts)
             && !looksLikeSelfRepeat(candidate, ownTexts)
             && !looksLikeDirectiveLeak(candidate)) ? candidate : null;
@@ -750,15 +752,17 @@ export class Engine {
                 const parsed = extractFollowUpMarker(cleaned.text);
                 text = sanitizeTextingOutput(parsed.text);
                 firstMore = parsed.more;
-                if (!text || looksLikeEcho(text, userTexts) || looksLikeSelfRepeat(text, ownTexts) || looksLikeDirectiveLeak(text)) {
+                if (!text || looksLikeEcho(text, userTexts) || looksLikeSelfRepeat(text, ownTexts) || looksLikeDirectiveLeak(text) || isGreetingPing(text)) {
                     // retry: empty/leaked output, an echo of the user's words,
-                    // or a verbatim recitation of the character's own earlier texts
+                    // a verbatim recitation of the character's own earlier
+                    // texts, or a contentless initiative greeting
                     if (text && looksLikeSelfRepeat(text, ownTexts)) {
                         this.#audit(entry.name, 'repeat_blocked', 'reply rejected — it recited its own earlier texts verbatim; regenerating');
                     }
                     let nudge = antiEchoNudge;
                     if (!text && cleaned.leaked) nudge = antiLeakNudge;
                     else if (text && looksLikeSelfRepeat(text, ownTexts)) nudge = antiRepeatNudge;
+                    else if (isGreetingPing(text)) nudge = antiGreetingNudge;
                     const retry = await this.ollama.chat({
                         model,
                         messages: [...messages, nudge],
@@ -772,13 +776,32 @@ export class Engine {
                     if (recleaned.leaked) this.#audit(entry.name, 'leak_blocked', 'stripped leaked prompt scaffolding from the retry');
                     const reparsed = extractFollowUpMarker(recleaned.text);
                     text = acceptable(sanitizeTextingOutput(reparsed.text)) ?? '';
+                    let droppedAsGreeting = false;
+                    if (text && isGreetingPing(text)) {
+                        this.#audit(entry.name, 'initiative_blocked', 'still a bare greeting after the nudge — saying nothing instead of texting "hey"');
+                        text = '';
+                        droppedAsGreeting = true;
+                    }
                     firstMore = reparsed.more && !!text;
-                    if (!text) {
-                        const retryWasRepeat = looksLikeSelfRepeat(sanitizeTextingOutput(reparsed.text), ownTexts);
+                    if (!text && !droppedAsGreeting) {
+                        const retryText = sanitizeTextingOutput(reparsed.text);
+                        const retryWasRepeat = looksLikeSelfRepeat(retryText, ownTexts);
                         const why = recleaned.leaked || cleaned.leaked ? 'its output was leaked prompt scaffolding'
                             : retryWasRepeat ? 'it recited its own earlier messages again'
                             : `it echoed ${this.chatStore.userName}'s words instead of answering`;
                         this.#audit(entry.name, recleaned.leaked ? 'leak_blocked' : retryWasRepeat ? 'repeat_blocked' : 'echo_blocked', `reply rejected — ${why}; retry also failed, dropping`);
+                    }
+                    if (droppedAsGreeting) {
+                        // a contentless ping after the nudge counts toward the
+                        // spiral breaker, and the fallback model gets no turn —
+                        // it would just greet too
+                        state.greetingRun = (state.greetingRun ?? 0) + 1;
+                        if (state.greetingRun >= 2) {
+                            state.greetingBackoffUntil = new Date(now.getTime() + 4 * HOUR).toISOString();
+                            this.#audit(entry.name, 'initiative_blocked', `${state.greetingRun} bare greetings in a row with no reply from you — initiative backing off until ${new Date(state.greetingBackoffUntil).toLocaleTimeString()}`);
+                        }
+                        this.store.saveState(state);
+                        break;
                     }
                 }
                 if (text) {
@@ -1109,6 +1132,37 @@ export class Engine {
         const life = evaluate(entry.autolife, this.nowFn());
         await this.#journal(entry, state, life, new Date());
         return state.journal?.at(-1)?.text ?? null;
+    }
+
+    /** Hand-write a journal entry (panel). @returns the created entry */
+    addJournalEntry(character, text) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        const clean = String(text ?? '').trim().slice(0, 400);
+        if (!clean) throw new Error('entry text is empty');
+        const state = this.#state(entry);
+        const note = { ts: new Date().toISOString(), text: clean, manual: true };
+        state.journal = [...(state.journal ?? []), note].slice(-40);
+        this.store.saveState(state);
+        this.#audit(character, 'journal', `journal entry added by hand: "${clean.slice(0, 80)}${clean.length > 80 ? '…' : ''}"`);
+        return note;
+    }
+
+    /** Hand-write an evolution reflection (panel), approved so it injects. */
+    addEvolveEntry(character, text) {
+        const entry = this.cards.find(character);
+        if (!entry?.autolife) throw new Error(`No autolife character "${character}".`);
+        const clean = String(text ?? '').trim().slice(0, 400);
+        if (!clean) throw new Error('entry text is empty');
+        const state = this.#state(entry);
+        state.evolve = state.evolve ?? { lastReflectAt: null, notes: [] };
+        const note = { ts: new Date().toISOString(), text: clean, status: 'approved', manual: true };
+        state.evolve.notes.push(note);
+        const cap = (entry.autolife.evolve?.max_notes ?? 10) * 2;
+        if (state.evolve.notes.length > cap) state.evolve.notes = state.evolve.notes.slice(-cap);
+        this.store.saveState(state);
+        this.#audit(character, 'evolve', `reflection added by hand (approved): "${clean.slice(0, 80)}${clean.length > 80 ? '…' : ''}"`);
+        return note;
     }
 
     /** Remove one journal entry (panel). @returns success */

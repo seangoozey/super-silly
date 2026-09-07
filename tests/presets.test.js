@@ -132,11 +132,12 @@ test('shipped preset files map cleanly (Scarlett card values; Desires full spec)
     assert.equal(desires.xtc_threshold, 0.05);
 });
 
-test('trimToCompleteSentence cuts mid-thought truncation', async () => {
+test('trimToCompleteSentence prunes the incomplete final sentence', async () => {
     const { trimToCompleteSentence } = await import('../plugin/src/llm.js');
     assert.equal(trimToCompleteSentence('I keep thinking about the package. It made me feel'), 'I keep thinking about the package.');
     assert.equal(trimToCompleteSentence('Short!'), 'Short!');
-    assert.equal(trimToCompleteSentence('no punctuation at all in this one'), 'no punctuation at all in this one', 'too short to cut — kept whole');
+    assert.equal(trimToCompleteSentence('completely fine entry.'), 'completely fine entry.');
+    assert.equal(trimToCompleteSentence('no punctuation anywhere in this one'), null, 'single truncated sentence — nothing complete to keep');
 });
 
 test('journal prompt demands diary-style thoughts, not message transcription', async () => {

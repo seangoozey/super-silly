@@ -634,23 +634,24 @@ test('initiative is blocked when she has nothing to say (material gate)', async 
     assert.equal(h.delivered.length, 1, 'initiative fires once she has a fresh thought');
 });
 
-test('greeting spiral: two bare pings into silence back initiative off', async () => {
+test('greeting spiral: bare initiatives are retried, then dropped, then backed off', async () => {
     const card = characterCard('Spiral', { initiative: { enabled: true, min_gap_minutes: 1, max_per_day: 10, followup_on_unread_hours: 0 } });
     let t = new Date(Date.UTC(2026, 0, 15, 12, 0));
-    // per tick: [initiative roll, journal skip, happening skip]
+    // per tick: [initiative roll, journal skip, happening skip]; the model
+    // always answers with a bare greeting (main AND retry)
     const h = buildHarness({ card, now: t, rngValues: [0.0, 0.5, 0.5, 0.0, 0.5, 0.5, 0.5, 0.5], reply: 'hey you' });
-    // material: a fresh journal before each initiative
+    // material: a fresh journal before each initiative attempt
     let st = stateOf(h.store, 'Spiral');
     st.lastJournalAt = new Date(t.getTime() - 30_000).toISOString();
     h.store.saveState(st);
     await h.engine.tick(t);
-    console.log('DEBUG audits:', h.store.readAudit('Spiral', 20).map((a) => a.kind).join(','));
-    console.log('DEBUG delivered:', JSON.stringify(h.delivered));
-    assert.equal(h.delivered.length, 1, 'first bare initiative fires');
+    // bare greetings are never delivered — dropped after the retry
+    assert.equal(h.delivered.filter((d) => !d.text.startsWith('You:')).length, 0, 'a bare greeting is never delivered');
     st = stateOf(h.store, 'Spiral');
-    assert.equal(st.greetingRun, 1);
+    assert.equal(st.greetingRun, 1, 'the dropped ping counts toward the spiral');
+    assert.ok(h.store.readAudit('Spiral', 30).some((a) => a.kind === 'initiative_blocked' && /still a bare greeting/.test(a.text)));
 
-    // two hours later, another fresh journal, another bare ping
+    // two hours later, another fresh journal, another dropped bare ping
     t = new Date(t.getTime() + 2 * 3600_000);
     h.clock.now = t;
     st.lastJournalAt = new Date(t.getTime() - 30_000).toISOString();
@@ -659,8 +660,8 @@ test('greeting spiral: two bare pings into silence back initiative off', async (
     await h.engine.tick(t);
     st = stateOf(h.store, 'Spiral');
     assert.equal(st.greetingRun, 2);
-    assert.ok(st.greetingBackoffUntil, 'backoff armed after two bare greetings');
-    assert.ok(h.store.readAudit('Spiral', 30).some((a) => a.kind === 'initiative_blocked' && /bare greetings/.test(a.text)));
+    assert.ok(st.greetingBackoffUntil, 'backoff armed after two dropped bare greetings');
+    assert.ok(h.store.readAudit('Spiral', 30).some((a) => a.kind === 'initiative_blocked' && /bare greetings in a row/.test(a.text)));
 
     // a third initiative with material is now held by the backoff
     t = new Date(t.getTime() + 2 * 3600_000);
@@ -669,13 +670,14 @@ test('greeting spiral: two bare pings into silence back initiative off', async (
     h.store.saveState(st);
     h.engine.rng = makeRng([0.0]);
     await h.engine.tick(t);
-    assert.equal(h.delivered.length, 2, 'backoff holds the third initiative');
+    assert.equal(h.delivered.filter((d) => !d.text.startsWith('You:')).length, 0, 'backoff holds the third initiative');
+    assert.ok(h.store.readAudit('Spiral', 30).some((a) => /backing off after bare/.test(a.text)));
     assert.ok(h.store.readAudit('Spiral', 30).some((a) => /backing off after bare/.test(a.text)));
 });
 
 test('happenings: invented everyday events supply initiative material and get consumed', async () => {
     const card = characterCard('Lived', { initiative: { enabled: true, min_gap_minutes: 1, max_per_day: 10, followup_on_unread_hours: 0 } });
-    const h = buildHarness({ card, rngValues: [0.0, 0.5, 0.5], reply: 'you will not BELIEVE what the vending machine just did to me' });
+    const h = buildHarness({ card, rngValues: [0.0, 0.5, 0.5], reply: 'you will not BELIEVE what the vending machine just did to me.' });
     const text = await h.engine.happeningNow('Lived');
     assert.ok(text && text.length > 5, 'a happening was generated');
     assert.ok(h.chatReqs.at(-1).messages.some((m) => m.content.includes('small, mundane thing')), 'happening prompt requests an everyday event');
@@ -705,7 +707,7 @@ test('schedule enhancement: lazy per-block activity, cached, used in lieu of sch
     const h = buildHarness({
         card,
         rngValues: [0.99, 0.0, 0.0],
-        reply: ['reconciling the invoices with half a latte going cold', 'main reply with fresh words'],
+        reply: ['reconciling the invoices with half a latte going cold.', 'main reply with fresh words'],
     });
     await h.engine.onInbound({ character: 'Cafe', mes: 'you around?', source: 'telegram' });
 
@@ -759,4 +761,40 @@ test('evolution generation sees only card + journals + reflections (no chat)', a
     assert.ok(system.includes('personality: cooperative'), 'card included');
     assert.ok(!req.messages.some((m) => m.role === 'assistant' || m.role === 'user' && m.content.includes('CHAT-MARKER')), 'no chat entries in evolution');
     assert.ok(system.includes('Never use pronouns for people'));
+});
+
+test('manual journal and evolution entries persist and are marked by hand', async () => {
+    const card = characterCard('Scribe', { evolve: { enabled: true } });
+    const h = buildHarness({ card, rngValues: [], reply: 'irrelevant for this test' });
+
+    const j = h.engine.addJournalEntry('Scribe', 'I finally told Dana about the promotion. She hugged me for ages.');
+    assert.ok(j.ts && j.manual === true);
+    let st = stateOf(h.store, 'Scribe');
+    assert.ok(st.journal.some((x) => x.manual && x.text.includes('promotion')), 'journal entry stored');
+
+    const e = h.engine.addEvolveEntry('Scribe', 'I have become warmer with Sean than the card suggests.');
+    assert.equal(e.status, 'approved', 'hand-written reflections are approved so they inject');
+    st = stateOf(h.store, 'Scribe');
+    assert.ok(st.evolve.notes.some((x) => x.manual && x.status === 'approved'), 'evolution entry stored approved');
+
+    assert.throws(() => h.engine.addJournalEntry('Scribe', '   '), /empty/);
+});
+
+test('bare initiative greetings are retried with the material, then dropped', async () => {
+    const card = characterCard('Greeter', { initiative: { enabled: true, min_gap_minutes: 1, max_per_day: 10, followup_on_unread_hours: 0 } });
+    // main attempt is a bare greeting; the retry produces real content
+    let h = buildHarness({ card, rngValues: [0.0], reply: ['hey', 'you will not believe what the espresso machine did this morning.'] });
+    await h.engine.force('Greeter', 'initiative');
+    const sent = h.delivered.filter((d) => !d.text.startsWith('You:'));
+    assert.equal(sent.length, 1);
+    assert.ok(sent[0].text.includes('espresso machine'), 'the regenerated, contentful text is delivered');
+    assert.ok(h.chatReqs[1].messages.some((m) => m.content.includes('contentless "hey"')), 'the retry carried the anti-greeting nudge');
+    const st = stateOf(h.store, 'Greeter');
+    assert.equal(st.greetingRun, 0, 'a contentful text resets the run');
+
+    // both attempts bare: nothing is delivered at all
+    h = buildHarness({ card, rngValues: [0.0], reply: ['hey', 'hi there'] });
+    await h.engine.force('Greeter', 'initiative');
+    assert.equal(h.delivered.filter((d) => !d.text.startsWith('You:')).length, 0, 'a bare greeting is never delivered');
+    assert.ok(h.store.readAudit('Greeter', 20).some((a) => a.kind === 'initiative_blocked' && /still a bare greeting/.test(a.text)));
 });

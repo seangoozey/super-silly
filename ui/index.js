@@ -8,7 +8,7 @@
 // Pairs with the `autolife` server plugin at /api/plugins/autolife/*.
 
 const PLUGIN = '/api/plugins/autolife';
-const EXT_VERSION = '0.6.19';
+const EXT_VERSION = '0.6.20';
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 let ST; // SillyTavern context, filled at boot
@@ -411,6 +411,10 @@ function panelModalHtml() {
                 <div class="autolife-section">
                     <h4>Journal <a class="autolife-btn" id="autolife_panel_journal_new" title="write one entry now"><i class="fa-solid fa-pen-to-square"></i></a> <a class="autolife-btn" id="autolife_panel_journal_refresh" title="reload"><i class="fa-solid fa-rotate"></i></a></h4>
                     <div id="autolife_panel_journal" class="autolife-audit-feed"></div>
+                    <div class="autolife-inline-actions" style="margin-top:6px;">
+                        <input type="text" id="autolife_journal_add_text" style="flex:1 1 200px" placeholder="write a journal entry by hand…">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_journal_add">Add entry</button>
+                    </div>
                 </div>
 
                 <div class="autolife-section">
@@ -503,6 +507,10 @@ function panelModalHtml() {
                     </div>
                     <div class="autolife-muted">Every few days the character reflects on how she's durably changed; reflections are suggestions you approve here or via /evolve in Telegram. Approved notes shape her prompts — the card itself never changes (purge resets her to the seed).</div>
                     <div id="autolife_evolve_list" class="autolife-audit-feed"></div>
+                    <div class="autolife-inline-actions" style="margin-top:6px;">
+                        <input type="text" id="autolife_evolve_add_text" style="flex:1 1 200px" placeholder="add a reflection by hand…">
+                        <button type="button" class="menu_button autolife-btn" id="autolife_evolve_add">Add reflection</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1544,6 +1552,28 @@ function wireEvents() {
     });
 
     $(document).on('click', '[data-journal-cancel]', () => refreshPanel());
+
+    $(document).on('click', '#autolife_journal_add', async () => {
+        if (!panelChar) return;
+        const text = $('#autolife_journal_add_text').val().trim();
+        if (!text) return;
+        try {
+            await api('/journal/add', 'POST', { name: panelChar, text });
+            $('#autolife_journal_add_text').val('');
+            refreshPanel();
+        } catch (e) { toast(e.message); }
+    });
+
+    $(document).on('click', '#autolife_evolve_add', async () => {
+        if (!panelChar) return;
+        const text = $('#autolife_evolve_add_text').val().trim();
+        if (!text) return;
+        try {
+            await api('/evolve/add', 'POST', { name: panelChar, text });
+            $('#autolife_evolve_add_text').val('');
+            refreshPanel();
+        } catch (e) { toast(e.message); }
+    });
 
     $(document).on('click', '#autolife_chat_switch', async () => {
         if (!panelChar) return;

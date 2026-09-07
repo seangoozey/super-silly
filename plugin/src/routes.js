@@ -502,6 +502,28 @@ export function registerRoutes(router, deps) {
         }
     }));
 
+    router.post('/journal/add', wrap(async (req, res) => {
+        const body = await readBody(req);
+        try {
+            const note = engine.addJournalEntry(String(body.name ?? ''), String(body.text ?? ''));
+            broadcast('state_changed', { character: String(body.name ?? '') });
+            res.json({ ok: true, note });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
+        }
+    }));
+
+    router.post('/evolve/add', wrap(async (req, res) => {
+        const body = await readBody(req);
+        try {
+            const note = engine.addEvolveEntry(String(body.name ?? ''), String(body.text ?? ''));
+            broadcast('state_changed', { character: String(body.name ?? '') });
+            res.json({ ok: true, note });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
+        }
+    }));
+
     router.post('/journal/edit', wrap(async (req, res) => {
         const body = await readBody(req);
         try {
